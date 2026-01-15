@@ -2,7 +2,7 @@
 model_name: economicgrasp
 
 # Data
-num_point: 20000
+num_point: 5000
 voxel_size: 0.005
 
 # EconomicGrasp network

@@ -19,128 +19,111 @@ from inference import EconomicGraspInference
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image", required=True)
+    parser.add_argument("--data_dir", required=True, help="Directory containing color.png, depth.png, and meta.mat")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--fastsam", default="fastsam/weight/FastSAM-s.pt")
-    parser.add_argument("--depth", help="Depth image path for grasp generation.")
-    parser.add_argument("--meta", help="Meta mat file path for camera intrinsics.")
     parser.add_argument("--grasp_checkpoint", help="EconomicGrasp checkpoint path.")
     parser.add_argument("--grasp_topk", type=int, default=10)
+    parser.add_argument("--no_collision", action="store_true", help="Disable collision detection during grasp generation.")
     args = parser.parse_args()
 
-    # Load Config & Resolve Paths
     cfg = load_config(str(ROOT / "vlm/config/settings.yaml"))
+    resolve = lambda p: (ROOT / p).resolve() if not Path(p).is_absolute() else Path(p)
 
-    def resolve(p):
-        return (ROOT / p).resolve() if not Path(p).is_absolute() else Path(p)
+    data_dir = resolve(args.data_dir)
+    if not data_dir.exists():
+        return print(f"Error: Data directory not found at {data_dir}")
 
-    img_path = resolve(args.image)
-    sam_path = resolve(args.fastsam)
-    out_dir = resolve(cfg.get("output_dir", "output"))
+    img_path = data_dir / "color.png"
+    depth_path = data_dir / "depth.png"
+    meta_path = data_dir / "meta.mat"
 
     if not img_path.exists():
-        return print(f"Error: Image not found at {img_path}")
+        return print(f"Error: Color image not found at {img_path}")
 
-    # Initialize Models
-    try:
-        vlm = StaticDetectionApp(
-            model_name=cfg.get("default_model", "qwen2.5-vl"),
-            template_name=cfg.get("template", "standard_detection.v2"),
-            prompts_dir=str(ROOT / "vlm" / cfg.get("prompts_dir", "prompts")),
-            show_latency=cfg.get("show_latency", False),
-        )
-        sam = ImageSegmentor(str(sam_path))
-    except Exception as e:
-        return print(f"Initialization Error: {e}")
+    # Output setup
+    out_dir = resolve(cfg.get("output_dir", "output"))
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-
-    # Run Pipeline
+    # 1. VLM Detection
     print(f"Detecting '{args.prompt}'...")
-    t_vlm_start = time.time()
-    res = vlm.run(str(img_path), args.prompt)
-    print(f"VLM Inference Time: {time.time() - t_vlm_start:.4f}s")
+    vlm = StaticDetectionApp(
+        model_name=cfg.get("default_model", "qwen2.5-vl"),
+        template_name=cfg.get("template", "standard_detection.v2"),
+        prompts_dir=str(ROOT / "vlm" / cfg.get("prompts_dir", "prompts")),
+    )
+    vlm_res = vlm.run(str(img_path), args.prompt)
+    if not vlm_res.get("pixel_boxes"):
+        return print(f"No objects detected.")
 
-    if not res.get("success") or not res.get("pixel_boxes"):
-        return print(f"No objects detected. {res.get('error', '')}")
+    # Save VLM Bbox Result
+    img_vis = cv2.imread(str(img_path))
+    for box in vlm_res["pixel_boxes"]:
+        x1, y1, x2, y2 = map(int, box)
+        cv2.rectangle(img_vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        # cv2.putText(img_vis, args.prompt, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+    cv2.imwrite(str(out_dir / "vlm_detection.png"), img_vis)
+    print(f"Saved VLM detection to {out_dir / 'vlm_detection.png'}")
 
-    print(f"Found {len(res['pixel_boxes'])} objects. Segmenting...")
-    t_sam_start = time.time()
-    seg_res = sam.segment(str(img_path), res["pixel_boxes"])
-    print(f"FastSAM Inference Time: {time.time() - t_sam_start:.4f}s")
-
-    if seg_res:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"seg_{img_path.name}"
-        cv2.imwrite(str(out_path), seg_res.plot(boxes=True, masks=True))
-        print(f"Saved: {out_path}")
-    else:
-        print("Segmentation failed.")
+    # 2. FastSAM Segmentation
+    print(f"Segmenting {len(vlm_res['pixel_boxes'])} objects...")
+    sam = ImageSegmentor(str(resolve(args.fastsam)))
+    seg_res = sam.segment(str(img_path), vlm_res["pixel_boxes"])
 
     seg_mask = None
-    if getattr(seg_res, "masks", None) is not None and seg_res.masks is not None:
+    if getattr(seg_res, "masks", None) is not None:
         mask_data = seg_res.masks.data
-        if mask_data is not None and len(mask_data) > 0:
-            if torch.is_tensor(mask_data):
-                mask_data = mask_data.cpu().numpy()
-            seg_mask = np.any(mask_data > 0, axis=0)
-    elif res.get("pixel_boxes"):
-        img = cv2.imread(str(img_path))
-        if img is not None:
-            h, w = img.shape[:2]
-            seg_mask = make_bbox_mask(res.get("pixel_boxes", []), h, w)
+        if torch.is_tensor(mask_data):
+            mask_data = mask_data.cpu().numpy()
+        seg_mask = np.any(mask_data > 0, axis=0)
 
-    if args.grasp_checkpoint:
-        img_dir = img_path.parent
-        depth_path = resolve(args.depth) if args.depth else (img_dir / "depth.png")
-        meta_path = resolve(args.meta) if args.meta else (img_dir / "meta.mat")
+    # 3. Grasp Generation
+    if args.grasp_checkpoint and seg_mask is not None:
+        print("Generating grasps...")
 
         if not depth_path.exists():
-            return print(f"Error: Depth not found at {depth_path}")
+            raise FileNotFoundError(f"Depth image not found at {depth_path}")
+        if not meta_path.exists():
+            raise FileNotFoundError(f"Meta file not found at {meta_path}")
 
-        try:
-            color_bgr = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
-            if color_bgr is None:
-                return print(f"Error: Failed to load color image at {img_path}")
-            color_rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
+        # Load Data
+        color = cv2.cvtColor(cv2.imread(str(img_path)), cv2.COLOR_BGR2RGB)
+        depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)
+        if depth is None:
+            raise ValueError(f"Failed to load depth image from {depth_path}")
 
-            depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)
-            if depth is None:
-                return print(f"Error: Failed to load depth image at {depth_path}")
+        # Load Meta (Strict, no defaults)
+        meta = scio.loadmat(str(meta_path))
+        if "intrinsic_matrix" not in meta:
+            raise KeyError(f"Meta file {meta_path} missing 'intrinsic_matrix'")
+        if "factor_depth" not in meta:
+            raise KeyError(f"Meta file {meta_path} missing 'factor_depth'")
 
-            intrinsic = np.array([[631.5, 0, 638.5], [0, 631.2, 367.0], [0, 0, 1]])
-            factor_depth = 1000.0
-            if meta_path and meta_path.exists():
-                meta = scio.loadmat(str(meta_path))
-                if "intrinsic_matrix" in meta and "factor_depth" in meta:
-                    intrinsic = meta["intrinsic_matrix"]
-                    factor_depth = float(meta["factor_depth"])
+        intrinsic = meta["intrinsic_matrix"]
+        factor_depth = float(meta["factor_depth"])
 
-            grasp_engine = EconomicGraspInference(
-                str(resolve(args.grasp_checkpoint)),
-                intrinsic=intrinsic,
-                factor_depth=factor_depth,
-            )
-            mask_for_grasp = seg_mask
-            gg, data_dict = grasp_engine.predict(
-                color=color_rgb,
-                depth=depth,
-                mask=mask_for_grasp,
-                topk=args.grasp_topk,
-            )
-        except Exception as e:
-            return print(f"Grasp Generation Error: {e}")
+        # Align Mask
+        if seg_mask.shape != depth.shape:
+            print(f"Resizing mask {seg_mask.shape} -> {depth.shape}")
+            seg_mask = cv2.resize(seg_mask.astype(np.uint8), (depth.shape[1], depth.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+            cv2.imwrite(str(out_dir / "segmentation_mask.png"), (seg_mask * 255).astype(np.uint8))
+            print(f"Saved segmentation mask to {out_dir / 'segmentation_mask.png'}")
 
-        if gg and len(gg) > 0:
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(data_dict["point_clouds"])
-            pcd.colors = o3d.utility.Vector3dVector(data_dict["cloud_colors"])
-            grippers = gg.to_open3d_geometry_list()
-            o3d.visualization.draw_geometries(
-                [pcd, *grippers],
-                window_name="EconomicGrasp Result",
-            )
+        # Inference
+        grasp_engine = EconomicGraspInference(
+            str(resolve(args.grasp_checkpoint)), intrinsic=intrinsic, factor_depth=factor_depth, use_collision=not args.no_collision
+        )
+        gg, data_dict = grasp_engine.predict(color, depth, mask=seg_mask, topk=args.grasp_topk)
+
+        # Visualization
+        if len(gg) > 0:
+            print("Visualizing... (Close the window to exit)")
+            cloud = o3d.geometry.PointCloud()
+            cloud.points = o3d.utility.Vector3dVector(data_dict["point_clouds"])
+            cloud.colors = o3d.utility.Vector3dVector(data_dict["cloud_colors"])
+            o3d.visualization.draw_geometries([cloud, *gg.to_open3d_geometry_list()], window_name="Result")
         else:
-            print("No grasps generated.")
+            print("No grasps found.")
 
 
 if __name__ == "__main__":

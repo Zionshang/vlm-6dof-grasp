@@ -1,6 +1,5 @@
 import os
 import numpy as np
-from PIL import Image
 import torch
 
 from models.economicgrasp import economicgrasp, pred_decode
@@ -17,29 +16,23 @@ class EconomicGraspInference:
         intrinsic,
         factor_depth,
         device=None,
-        num_points=None,
-        voxel_size=None,
-        m_point=None,
-        grasp_max_width=None,
-        collision_thresh=None,
+        use_collision=True,
     ):
         self.device = device or torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.num_points = num_points if num_points is not None else cfgs.num_point
-        self.voxel_size = voxel_size if voxel_size is not None else cfgs.voxel_size
-        self.m_point = m_point if m_point is not None else cfgs.m_point
         self.intrinsic = intrinsic
         self.factor_depth = factor_depth
-        self.grasp_max_width = (
-            grasp_max_width if grasp_max_width is not None else cfgs.grasp_max_width
-        )
-        self.collision_thresh = (
-            collision_thresh if collision_thresh is not None else cfgs.collision_thresh
-        )
+        self.use_collision = use_collision
+
+        # Load params from cfgs
+        self.num_points = cfgs.num_point
+        self.voxel_size = cfgs.voxel_size
+        self.m_point = cfgs.m_point
+        self.grasp_max_width = cfgs.grasp_max_width
+        self.collision_thresh = cfgs.collision_thresh
+
         self.net = self._load_model(checkpoint_path)
 
     def _load_model(self, checkpoint_path):
-        if checkpoint_path is None:
-            raise ValueError("checkpoint_path is required.")
         if not os.path.isfile(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint file not found at {checkpoint_path}")
 
@@ -52,6 +45,7 @@ class EconomicGraspInference:
             num_view=cfgs.num_view,
             graspness_threshold=cfgs.graspness_threshold,
             grasp_max_width=cfgs.grasp_max_width,
+            voxel_size=self.voxel_size,
         )
         net.to(self.device)
 
@@ -60,105 +54,121 @@ class EconomicGraspInference:
         net.eval()
         return net
 
-    def _camera_from_intrinsics(self, depth_shape, intrinsic, factor_depth):
-        height, width = depth_shape
-        return CameraInfo(
-            width,
-            height,
-            intrinsic[0][0],
-            intrinsic[1][1],
-            intrinsic[0][2],
-            intrinsic[1][2],
-            factor_depth,
-        )
+    def predict(self, color, depth, mask=None, topk=100):
+        # 1. Process Data
+        if depth.ndim == 3: depth = depth[..., 0]
+        if color.dtype == np.uint8: color = color.astype(np.float32) / 255.0
 
-    def _prepare_data(self, color, depth, mask=None, seg_mask=None):
-        if depth.ndim == 3:
-            depth = depth[..., 0]
-        if color.dtype != np.float32 and color.dtype != np.float64:
-            color = color.astype(np.float32) / 255.0
-
-        camera = self._camera_from_intrinsics(depth.shape, self.intrinsic, self.factor_depth)
+        camera = CameraInfo(depth.shape[1], depth.shape[0], self.intrinsic[0][0], self.intrinsic[1][1], self.intrinsic[0][2], self.intrinsic[1][2], self.factor_depth)
         cloud = create_point_cloud_from_depth_image(depth, camera, organized=True)
 
-        depth_mask = depth > 0
-        final_mask = depth_mask
-        if seg_mask is not None:
-            if seg_mask.shape != final_mask.shape:
-                seg_mask = np.array(
-                    Image.fromarray((seg_mask > 0).astype(np.uint8) * 255).resize(
-                        (final_mask.shape[1], final_mask.shape[0]), resample=Image.NEAREST
-                    )
-                ) > 0
-            final_mask = final_mask & seg_mask
-        elif mask is not None:
-            if mask.shape != final_mask.shape:
-                mask = np.array(
-                    Image.fromarray((mask > 0).astype(np.uint8) * 255).resize(
-                        (final_mask.shape[1], final_mask.shape[0]), resample=Image.NEAREST
-                    )
-                ) > 0
-            final_mask = final_mask & mask
-
+        # Masking
+        workspace_mask = mask if mask is not None else (depth > 0)
+        if workspace_mask.shape != depth.shape:
+            raise ValueError(f"Mask shape {workspace_mask.shape} does not match depth shape {depth.shape}")
+        
+        final_mask = (workspace_mask & (depth > 0))
         cloud_masked = cloud[final_mask]
         color_masked = color[final_mask]
-        if len(cloud_masked) == 0:
-            raise ValueError("No valid points found after masking.")
 
+        if len(cloud_masked) == 0:
+            print("Warning: No points in mask!")
+            return GraspGroup(), np.zeros((0, 3))
+
+        # Sample points
         if len(cloud_masked) >= self.num_points:
             idxs = np.random.choice(len(cloud_masked), self.num_points, replace=False)
         else:
             idxs1 = np.arange(len(cloud_masked))
-            idxs2 = np.random.choice(
-                len(cloud_masked), self.num_points - len(cloud_masked), replace=True
-            )
+            idxs2 = np.random.choice(len(cloud_masked), self.num_points - len(cloud_masked), replace=True)
             idxs = np.concatenate([idxs1, idxs2], axis=0)
-
-        cloud_sampled = cloud_masked[idxs]
-        color_sampled = color_masked[idxs]
-
-        data_dict = {
-            "point_clouds": cloud_sampled.astype(np.float32),
-            "cloud_colors": color_sampled.astype(np.float32),
-        }
+        
+        cloud_sampled = cloud_masked[idxs].astype(np.float32)
+        
+        # Prepare Batch
         batch_data = {
-            "point_clouds": torch.from_numpy(data_dict["point_clouds"])
-            .unsqueeze(0)
-            .to(self.device),
-            "coordinates_for_voxel": [
-                torch.from_numpy(data_dict["point_clouds"] / self.voxel_size).to(self.device)
-            ],
+            'point_clouds': torch.from_numpy(cloud_sampled).unsqueeze(0).to(self.device),
+            'coordinates_for_voxel': [torch.from_numpy(cloud_sampled / self.voxel_size).to(self.device)]
         }
-        return data_dict, batch_data
 
-
-    def predict(self, color, depth, mask=None, use_collision=True, topk=100):
-        data_dict, batch_data = self._prepare_data(
-            color=color,
-            depth=depth,
-            mask=mask,
-            seg_mask=None,
-        )
+        # 2. Inference
         with torch.no_grad():
             end_points = self.net(batch_data)
-            grasp_preds = pred_decode(
-                end_points, m_point=self.m_point, grasp_max_width=self.grasp_max_width
-            )
-
+            grasp_preds = pred_decode(end_points, m_point=self.m_point, grasp_max_width=self.grasp_max_width)
+        
         preds = grasp_preds[0].detach().cpu().numpy()
         gg = GraspGroup(preds)
 
-        if use_collision and self.collision_thresh > 0:
-            mfcdetector = ModelFreeCollisionDetector(
-                data_dict["point_clouds"], voxel_size=self.voxel_size
-            )
-            collision_mask = mfcdetector.detect(
-                gg, approach_dist=0.05, collision_thresh=self.collision_thresh
-            )
+        # 3. Collision Detection
+        if self.use_collision and self.collision_thresh > 0:
+            mfcdetector = ModelFreeCollisionDetector(cloud_sampled, voxel_size=self.voxel_size)
+            collision_mask = mfcdetector.detect(gg, approach_dist=0.05, collision_thresh=self.collision_thresh)
             gg = gg[~collision_mask]
 
+        # 4. Post-processing
         gg = gg.nms()
         gg = gg.sort_by_score()
         if topk is not None:
-            gg = gg[:topk]
+             gg = gg[:topk]
+             
+        data_dict = {
+            "point_clouds": cloud_sampled, 
+            "cloud_colors": color_masked[idxs].astype(np.float32)
+        }
         return gg, data_dict
+
+if __name__ == "__main__":
+    import argparse
+    import scipy.io as scio
+    import open3d as o3d
+    from PIL import Image
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--checkpoint_path', required=True, help='Model checkpoint path')
+    parser.add_argument('--data_dir', default='example_data', help='Data directory')
+    args = parser.parse_args()
+    
+    data_dir = args.data_dir
+    
+    # Load meta
+    meta_path = os.path.join(data_dir, 'meta.mat')
+    if not os.path.exists(meta_path):
+         raise FileNotFoundError(f"Meta file not found: {meta_path}")
+    meta = scio.loadmat(meta_path)
+    intrinsic = meta['intrinsic_matrix']
+    factor_depth = meta['factor_depth']
+
+    # Load images
+    color = np.array(Image.open(os.path.join(data_dir, 'color.png')), dtype=np.float32) / 255.0
+    depth = np.array(Image.open(os.path.join(data_dir, 'depth.png')))
+    
+    # Load mask
+    workspace_mask_path = os.path.join(data_dir, 'workspace_mask.png')
+    workspace_mask = None
+    if os.path.exists(workspace_mask_path):
+        workspace_mask = np.array(Image.open(workspace_mask_path)) > 0
+    
+    # Inference
+    inference = EconomicGraspInference(
+        checkpoint_path=args.checkpoint_path,
+        intrinsic=intrinsic,
+        factor_depth=factor_depth
+    )
+    
+    gg, data_dict = inference.predict(
+        color=color,
+        depth=depth,
+        mask=workspace_mask
+    )
+    
+    # Visualization
+    print('Visualizing... (Close the window to exit)')
+    cloud_points = data_dict['point_clouds']
+    cloud_colors = data_dict['cloud_colors']
+    
+    cloud = o3d.geometry.PointCloud()
+    cloud.points = o3d.utility.Vector3dVector(cloud_points)
+    cloud.colors = o3d.utility.Vector3dVector(cloud_colors)
+    
+    grippers = gg.to_open3d_geometry_list()
+    o3d.visualization.draw_geometries([cloud, *grippers])
