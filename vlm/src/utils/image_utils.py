@@ -63,6 +63,23 @@ def convert_normalized_yxyx_to_pixel_xyxy(boxes: List[List[int]], img_width: int
             pixel_boxes.append([px_x1, px_y1, px_x2, px_y2])
     return pixel_boxes
 
+def make_bbox_mask(pixel_boxes: List[List[int]], height: int, width: int) -> np.ndarray:
+    """
+    Create a boolean mask from pixel [x1, y1, x2, y2] boxes.
+    """
+    mask = np.zeros((height, width), dtype=bool)
+    for box in pixel_boxes:
+        if len(box) != 4:
+            continue
+        x1, y1, x2, y2 = [int(round(v)) for v in box]
+        x1 = max(0, min(width - 1, x1))
+        x2 = max(0, min(width, x2))
+        y1 = max(0, min(height - 1, y1))
+        y2 = max(0, min(height, y2))
+        if x2 > x1 and y2 > y1:
+            mask[y1:y2, x1:x2] = True
+    return mask
+
 def draw_bounding_boxes(image_source: Union[str, Path, np.ndarray], boxes: List[List[int]], 
                         output_path: str = None, labels: List[str] = None, 
                         color: str = "red", width: int = 3):
@@ -93,4 +110,3 @@ def draw_bounding_boxes(image_source: Union[str, Path, np.ndarray], boxes: List[
     except Exception as e:
         print(f"Error checking/drawing image: {e}")
         return False
-
