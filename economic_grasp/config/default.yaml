@@ -1,0 +1,33 @@
+# Model
+model_name: economicgrasp
+
+# Data
+num_point: 20000
+voxel_size: 0.005
+
+# EconomicGrasp network
+grasp_max_width: 0.1
+graspness_threshold: 0.1
+num_view: 300
+num_angle: 12
+num_depth: 4
+m_point: 1024
+
+# Loss
+objectness_loss_weight: 1
+graspness_loss_weight: 10
+view_loss_weight: 100
+angle_loss_weight: 1
+depth_loss_weight: 1
+score_loss_weight: 1
+width_loss_weight: 10
+
+# Training
+resume: false
+max_epoch: 10
+batch_size: 4
+learning_rate: 0.001
+weight_decay: 0
+
+# Testing
+collision_thresh: 0

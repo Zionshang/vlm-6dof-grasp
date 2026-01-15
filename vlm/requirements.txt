@@ -1,0 +1,6 @@
+ollama
+Pillow
+PyYAML
+pyrealsense2
+numpy
+opencv-python

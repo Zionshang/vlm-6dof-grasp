@@ -1,0 +1,17 @@
+default_model: "qwen3-vl:32b-instruct-q4_K_M" # qwen3-vl:8b-instruct-q4_K_M, qwen3-vl:32b-instruct-q4_K_M
+template: "standard_detection.v2"
+
+prompts_dir: "prompts"
+output_dir: "output"
+show_latency: true
+max_image_width: 640
+camera:
+  width: 1280
+  height: 720
+  fps: 30
+  warmup_seconds: 1
+
+visualization:
+  box_color: "red"      # e.g., "red", "green", "blue", "#FF0000"
+  box_width: 3
+  text_color: "red"

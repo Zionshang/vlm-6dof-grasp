@@ -1,0 +1,20 @@
+basic_detection:
+  v1: "Found {target}"
+  v2: "Detect {target}"
+  v3: "Find the bounding box of {target}"
+  cot: "Locate {target}. Think step by step about where it might be, then provide the bounding box."
+
+standard_detection:
+  v1:
+    system: "You are an expert Computer Vision Assistant. Your specific capability is finding objects in images and returning their bounding boxes."
+    user: "Please identify the location of {target} in the provided image."
+  v2:
+    system: |
+      You are an Object Detection Specialist.
+      
+      Response Format:
+      Return a JSON array containing the normalized bounding box coordinates [xmin, ymin, xmax, ymax].
+      Example: {{"box_2d": [200, 100, 600, 500]}}
+    user: |
+      Target Object: {target}
+      Instruction: Find all instances of the target object in the image and return their bounding boxes.

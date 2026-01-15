@@ -1,0 +1,84 @@
+# --- Python 核心编译与缓存文件 ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- C 扩展 (如果项目包含 C 模块) ---
+*.so
+
+# --- 分发与打包 (Distribution / Packaging) ---
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- 单元测试与代码覆盖率 (Unit Test / Coverage) ---
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# --- Jupyter Notebook ---
+.ipynb_checkpoints
+
+# --- 虚拟环境 (Virtual Environments) ---
+# 常见的虚拟环境命名习惯
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# --- IDE 与 编辑器配置 (IDE / Editor) ---
+# JetBrains (Pycharm/IntelliJ)
+.idea/
+# VS Code
+.vscode/
+*.code-workspace
+# macOS 产生的系统垃圾文件
+.DS_Store
+
+# --- 类型检查 (Type Checking) ---
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# --- 敏感信息与本地配置 (Secrets & Local Config) ---
+# 警告：绝对不要将包含密码或 API Key 的 .env 文件提交
+.env
+.env.local
+config.local.py
+secrets.yaml
+
+# --- 日志文件 (Logs) ---
+*.log
+
+output
+logs
+economic_grasp/results
+runs
