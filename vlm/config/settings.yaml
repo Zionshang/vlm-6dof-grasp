@@ -3,7 +3,6 @@ template: "standard_detection.v2"
 
 prompts_dir: "prompts"
 output_dir: "output"
-show_latency: true
 max_image_width: 640
 camera:
   width: 1280

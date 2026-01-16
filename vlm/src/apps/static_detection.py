@@ -6,33 +6,26 @@ from typing import Optional, Dict, Any, List
 from src.core.llm_client import OllamaClient
 from src.core.prompt_manager import PromptManager
 from src.parsers.bbox_parser import BoundingBoxParser
-from src.core.detector import ObjectDetector
 from src.utils.image_utils import convert_normalized_yxyx_to_pixel_xyxy # Import converter
 
 class StaticDetectionApp:
     def __init__(self, 
                  model_name: str, 
                  template_name: str = "standard_detection.v2",
-                 prompts_dir: str = "prompts",
-                 show_latency: bool = False):
+                 prompts_dir: str = "prompts"):
 
         self.model_name = model_name
         self.template_name = template_name
         self.prompts_dir = prompts_dir
-        self.show_latency = show_latency
         
-        self._init_components()
-
-    def _init_components(self):
-        # Initialize components silently or with debug level logging
+        # Initialize components directly
         self.llm_client = OllamaClient(model_name=self.model_name)
         self.prompt_manager = PromptManager(prompt_dir=self.prompts_dir)
         self.bbox_parser = BoundingBoxParser()
-        self.detector = ObjectDetector(self.llm_client, self.bbox_parser, show_latency=self.show_latency)
 
     def run(self, image_path: str, target_object: str) -> Dict[str, Any]:
         """
-        Detects objects in the image.
+        Detects objects in the image directly using LLM and Parser.
         Returns a dictionary containing:
         - success: bool
         - pixel_boxes: List[List[int]] [x1, y1, x2, y2]
@@ -51,21 +44,23 @@ class StaticDetectionApp:
             # Fallback
             prompt = f"Detect {target_object}"
 
-        # Run Detector (pass path directly)
-        detect_result = self.detector.run(str(image_path), prompt)
-        normalized_boxes = detect_result.get('coordinates', [])
+        # Run Inference
+        
+        # 1. Generate (Ollama)
+        raw_response = self.llm_client.generate(prompt, images=[str(image_path)])
+        
+        # 2. Parse
+        normalized_boxes = self.bbox_parser.parse(raw_response)
         
         if not normalized_boxes:
             return {
-                "success": True, # Call successful, just no objects
+                "success": True, 
                 "pixel_boxes": [],
                 "normalized_boxes": [],
-                "raw_response": detect_result.get('raw_response', ''),
-                "latency_seconds": detect_result.get('latency_seconds', 0)
+                "raw_response": raw_response
             }
             
-        # Convert to pixel coordinates
-        # Need to read image dimensions
+        # 3. Convert Coordinates
         img = cv2.imread(str(image_path))
         if img is None:
              return {"success": False, "error": "Failed to read image for dimensions"}
@@ -77,8 +72,7 @@ class StaticDetectionApp:
             "success": True,
             "pixel_boxes": pixel_boxes,
             "normalized_boxes": normalized_boxes,
-            "raw_response": detect_result.get('raw_response', ''),
-            "latency_seconds": detect_result.get('latency_seconds', 0)
+            "raw_response": raw_response
         }
 
 

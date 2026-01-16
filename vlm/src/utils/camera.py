@@ -10,11 +10,6 @@ class RealSenseCamera:
             self.config = rs.config()
             self.config.enable_stream(rs.stream.color, width, height, rs.format.rgb8, fps)
             
-            # Reduce latency by setting queue size to 1
-            # Note: This might require different handling depending on pyrealsense2 version, 
-            # but usually pipeline config handles streams. 
-            # Ideally we set frame_queue size on the sensor, but for simplicity we'll just start.
-            
             self.pipeline.start(self.config)
             # Warmup
             if warmup > 0:
