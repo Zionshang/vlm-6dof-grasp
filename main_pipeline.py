@@ -14,7 +14,7 @@ from vlm.src.core.config import load_config
 from vlm.src.apps.static_detection import StaticDetectionApp
 from vlm.src.utils.image_utils import make_bbox_mask
 from fastsam.segmentor import ImageSegmentor
-from inference import EconomicGraspInference
+from economic_grasp.inference import EconomicGraspInference
 
 
 def main():
@@ -24,7 +24,8 @@ def main():
     parser.add_argument("--fastsam", default="fastsam/weight/FastSAM-s.pt")
     parser.add_argument("--grasp_checkpoint", help="EconomicGrasp checkpoint path.")
     parser.add_argument("--grasp_topk", type=int, default=10)
-    parser.add_argument("--no_collision", action="store_true", help="Disable collision detection during grasp generation.")
+    parser.add_argument("--use_collision", default=True, help="Enable collision detection during grasp generation.")
+    parser.add_argument("--use_sam", default=True, help="Use FastSAM for segmentation.")
     args = parser.parse_args()
 
     cfg = load_config(str(ROOT / "vlm/config/settings.yaml"))
@@ -65,17 +66,22 @@ def main():
     cv2.imwrite(str(out_dir / "vlm_detection.png"), img_vis)
     print(f"Saved VLM detection to {out_dir / 'vlm_detection.png'}")
 
-    # 2. FastSAM Segmentation
-    print(f"Segmenting {len(vlm_res['pixel_boxes'])} objects...")
-    sam = ImageSegmentor(str(resolve(args.fastsam)))
-    seg_res = sam.segment(str(img_path), vlm_res["pixel_boxes"])
-
+    # 2. FastSAM Segmentation (or BBox to Mask)
     seg_mask = None
-    if getattr(seg_res, "masks", None) is not None:
-        mask_data = seg_res.masks.data
-        if torch.is_tensor(mask_data):
-            mask_data = mask_data.cpu().numpy()
-        seg_mask = np.any(mask_data > 0, axis=0)
+    if args.use_sam:
+        print(f"Segmenting {len(vlm_res['pixel_boxes'])} objects...")
+        sam = ImageSegmentor(str(resolve(args.fastsam)))
+        seg_res = sam.segment(str(img_path), vlm_res["pixel_boxes"])
+
+        if getattr(seg_res, "masks", None) is not None:
+            mask_data = seg_res.masks.data
+            if torch.is_tensor(mask_data):
+                mask_data = mask_data.cpu().numpy()
+            seg_mask = np.any(mask_data > 0, axis=0)
+    else:
+        print("Using VLM bounding boxes as mask directly (Skipping SAM)...")
+        h, w = img_vis.shape[:2]
+        seg_mask = make_bbox_mask(vlm_res["pixel_boxes"], h, w)
 
     # 3. Grasp Generation
     if args.grasp_checkpoint and seg_mask is not None:
@@ -111,7 +117,7 @@ def main():
 
         # Inference
         grasp_engine = EconomicGraspInference(
-            str(resolve(args.grasp_checkpoint)), intrinsic=intrinsic, factor_depth=factor_depth, use_collision=not args.no_collision
+            str(resolve(args.grasp_checkpoint)), intrinsic=intrinsic, factor_depth=factor_depth, use_collision=args.use_collision
         )
         gg, data_dict = grasp_engine.predict(color, depth, mask=seg_mask, topk=args.grasp_topk)
 
