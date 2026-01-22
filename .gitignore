@@ -82,3 +82,7 @@ output
 logs
 economic_grasp/results
 runs
+
+# --- checkpoint ---
+economic_grasp/checkpoint/economicgrasp_epoch10.tar
+economic_grasp/checkpoint/
