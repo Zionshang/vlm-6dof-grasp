@@ -1,4 +1,5 @@
-default_model: "qwen3-vl:32b-instruct-q4_K_M" # qwen3-vl:8b-instruct-q4_K_M, qwen3-vl:32b-instruct-q4_K_M
+default_model: "qwen3-vl:32b-instruct-q4_K_M"
+# default_model: "qwen3-vl:8b-instruct-q4_K_M" # qwen3-vl:8b-instruct-q4_K_M, qwen3-vl:32b-instruct-q4_K_M
 template: "standard_detection.v2"
 
 prompts_dir: "prompts"

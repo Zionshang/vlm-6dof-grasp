@@ -13,6 +13,9 @@ from communication.lcm.lcm_client import Arx5LcmClient
 from inference_pipeline import GraspPipeline
 from realsense_driver import RealSenseD405
 from convert import convert_new
+from economic_grasp.utils.vlm_utils import vlm_grasp_visualize_batch
+from vlm.src.apps.grasp_selection import GraspSelectionApp
+import shutil
 
 # Hand-Eye Calibration (Camera -> End Effector)
 HAND_EYE_R = np.array([
@@ -38,6 +41,8 @@ class RealtimeGraspController:
         self.current_prompt = "mug"
         self.running = True
         self.grip_max = get_gripper_max_width(client)
+        model_name = self.pipeline.cfg.get("default_model", "qwen2.5-vl") if hasattr(self.pipeline, "cfg") else "qwen2.5-vl"
+        self.vlm_selector = GraspSelectionApp(model_name=model_name, prompts_dir=str(ROOT / "vlm/prompts"))
         
         # Key Config: Map keys to specific handler functions
         self.key_actions = {
@@ -128,28 +133,56 @@ class RealtimeGraspController:
             pass
 
     def action_grasp(self, color, depth):
-        print(f"\n[Grasp] Prompt: '{self.current_prompt}'")
-        if color is None: 
-            return print("Error: No camera frame available.")
-
-        # 1. Capture & Inference
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        self._save_capture(color, depth, timestamp) # Optional helper extraction or inline
+        self._save_capture(color, depth, timestamp) 
         
-        trans, rot, width = self.pipeline.run(color, depth, prompt=self.current_prompt, run_id=timestamp)
-        if trans is None:
-            return print("Grasp detection failed.")
+        # Get Top 5
+        trans_list, rot_list, width_list = self.pipeline.run(color, depth, prompt=self.current_prompt, run_id=timestamp)
+        if trans_list is None: return print("Grasp detection failed.")
 
-        # 2. Convert to Robot Frame
+        # VLM Selection
+        imgs, candidates = vlm_grasp_visualize_batch(
+            color, trans_list, rot_list, width_list, 
+            self.pipeline.grasp_engine.intrinsic, top_k=5
+        )
+        savedir = ROOT / "output/2D_grasp"
+        if savedir.exists(): shutil.rmtree(savedir)
+        savedir.mkdir(parents=True)
+        
+        paths = []
+        for i, img in enumerate(imgs):
+            p = savedir / f"{i}.jpg"
+            # cv2.imwrite expects BGR, but img is RGB
+            cv2.imwrite(str(p), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+            paths.append(str(p))
+
+        print("[VLM] Selecting best grasp...")
+        vlm_res = self.vlm_selector.run(paths)
+        print(f"[VLM] Full Response: {vlm_res}")
+        
+        best_id = vlm_res.get("selected_id") if isinstance(vlm_res, dict) else None
+        idx = 0
+        if best_id is not None:
+            best_id = int(best_id)
+            if 0 <= best_id < len(candidates):
+                idx = best_id
+        
+        print(f"[VLM] Final Decision -> ID: {idx}")
+        if input("Execute grasp? (y/n) > ").lower() != 'y': return
+
+        sel = candidates[idx]
+        # Convert
         state = self.client.get_state()
         curr_pose = state['ee_pose']
-        arm_cmd = convert_new(trans, rot, curr_pose, HAND_EYE_R, HAND_EYE_T)
+        arm_cmd = convert_new(np.array(sel['translation']), np.array(sel['rotation']), 
+                              curr_pose, HAND_EYE_R, HAND_EYE_T)
+        width = sel['width']
         
         print(f"Target Pose (Base): {arm_cmd}")
 
         # 3. Safety Check & Execution
         x, y, z = arm_cmd[:3]
-        if (0 <= x <= 0.7) and (-0.6 <= y <= 0.6) and (-0.01 <= z <= 0.7):
+        if (0 <= x <= 0.7) and (-0.6 <= y <= 0.6) and (-0.02 <= z <= 0.7):
             print("Pose valid. Executing grasp sequence...")
             
             grip_max = self.grip_max

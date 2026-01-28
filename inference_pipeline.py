@@ -156,10 +156,6 @@ class GraspPipeline:
         return None
 
     def _run_grasping(self, color, depth, mask):
-        best_translation = None
-        best_rotation_matrix = None
-        best_width = None
-
         if self.grasp_engine and mask is not None:
             print("[Pipeline] Generating grasps...")
             # Align mask
@@ -169,17 +165,18 @@ class GraspPipeline:
             gg, data_dict = self.grasp_engine.predict(color, depth, mask=mask, topk=self.args.grasp_topk)
             
             if len(gg) > 0:
-                best = gg[0]
-                best_translation = best.translation
-                best_rotation_matrix = best.rotation_matrix
-                best_width = best.width
-                print(f"[Pipeline] Best Grasp Found:\n T: {best_translation}")
+                top_n = min(len(gg), 5)
+                print(f"[Pipeline] Found {len(gg)} grasps. Returning top {top_n}.")
                 if not self.args.no_vis:
                     self._visualize_grasps(gg, data_dict)
+                
+                # Return Top 5 candidates
+                sub_gg = gg[:top_n]
+                return sub_gg.translations, sub_gg.rotation_matrices, sub_gg.widths
             else:
                 print("[Pipeline] No valid grasps found.")
         
-        return best_translation, best_rotation_matrix, best_width
+        return None, None, None
 
     def _visualize_vlm(self, color, boxes, run_id=None):
         img_vis = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
@@ -209,11 +206,17 @@ class GraspPipeline:
         cloud.points = o3d.utility.Vector3dVector(data_dict["point_clouds"])
         cloud.colors = o3d.utility.Vector3dVector(data_dict["cloud_colors"])
         
-        # Background (rest) + Best (black)
-        geometries = [cloud, *gg[1:].to_open3d_geometry_list()]
+        geometries = [cloud]
         
-        best_geo = gg[0].to_open3d_geometry(color=(0, 0, 0))
-        geometries.extend(best_geo if isinstance(best_geo, list) else [best_geo])
+        # Visualizing top 5 as black
+        top_n = min(len(gg), 5)
+        for i in range(top_n):
+             g = gg[i].to_open3d_geometry(color=(0, 0, 0))
+             geometries.extend(g if isinstance(g, list) else [g])
+
+        # Rest (visualized with default rainbow colors usually handled by to_open3d_geometry_list)
+        if len(gg) > top_n:
+             geometries.extend(gg[top_n:].to_open3d_geometry_list())
         
         o3d.visualization.draw_geometries(geometries, window_name="Grasp Results")
 

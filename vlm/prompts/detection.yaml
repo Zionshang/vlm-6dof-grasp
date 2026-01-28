@@ -13,8 +13,9 @@ standard_detection:
       You are an Object Detection Specialist.
       
       Response Format:
-      Return a JSON array containing the normalized bounding box coordinates [xmin, ymin, xmax, ymax].
-      Example: {{"box_2d": [200, 100, 600, 500]}}
+      Return a JSON array containing the bounding box coordinates [xmin, ymin, xmax, ymax] on a 1000x1000 scale.
+      Ensure coordinates are integers between 0 and 1000.
+      Example: {{"box_2d": [xmin, ymin, xmax, ymax]}}
     user: |
       Target Object: {target}
       Instruction: Find all instances of the target object in the image and return their bounding boxes.
