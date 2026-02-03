@@ -25,12 +25,13 @@ def project_grasp_to_2d(trans, rot, width, intrinsic, depth=0.04):
     d = depth
     
     # 定义关键点 (在抓取局部坐标系下)
-    # 修正：Origin 在 Base，Tip 在 +X 方向
+    # 根据用户反馈：Origin (X=0) 是指尖位置 (Tip)，而非指根。
+    # 因此 Tip 在 X=0，Base 在 -X 方向 (X=-depth)
     points_g = np.array([
-        [d,  -hw, 0],  # 0: 左指尖
-        [0,  -hw, 0],  # 1: 左指根
-        [0,   hw, 0],  # 2: 右指根
-        [d,   hw, 0],  # 3: 右指尖
+        [0,   -hw, 0],  # 0: 左指尖 (Tip)
+        [-d,  -hw, 0],  # 1: 左指根 (Base)
+        [-d,   hw, 0],  # 2: 右指根 (Base) (在此处绘制蓝点)
+        [0,    hw, 0],  # 3: 右指尖 (Tip)
     ]).T # (3, 4)
 
     # 变换到相机坐标系
@@ -157,6 +158,9 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
         cv2.line(vis_img, tuple(pts[1]), tuple(pts[2]), color_base, thick)
         cv2.line(vis_img, tuple(pts[2]), tuple(pts[3]), color_finger, thick)
         
+        # 绘制右指根蓝色圆点 (pts[2])
+        cv2.circle(vis_img, tuple(pts[2]), 8, (0, 0, 255), -1)
+
         # 绘制抓取方向箭头 (蓝色箭头: 底座 -> 指尖)
         # 计算中心点
         center_base = np.mean(pts[1:3], axis=0).astype(int)

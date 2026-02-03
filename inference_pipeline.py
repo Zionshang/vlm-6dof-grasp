@@ -158,21 +158,36 @@ class GraspPipeline:
     def _run_grasping(self, color, depth, mask):
         if self.grasp_engine and mask is not None:
             print("[Pipeline] Generating grasps...")
-            # Align mask
             if mask.shape != depth.shape:
                 mask = cv2.resize(mask.astype(np.uint8), (depth.shape[1], depth.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
             
-            gg, data_dict = self.grasp_engine.predict(color, depth, mask=mask, topk=self.args.grasp_topk)
+            # Fetch more for filtering
+            gg, data_dict = self.grasp_engine.predict(color, depth, mask=mask, topk=100)
             
             if len(gg) > 0:
-                top_n = min(len(gg), 5)
-                print(f"[Pipeline] Found {len(gg)} grasps. Returning top {top_n}.")
+                keep_inds = []
+                for i in range(len(gg)):
+                    if len(keep_inds) >= 5: break
+                    R = gg[i].rotation_matrix
+                    # Cond 1: Approach(X) close to Vertical(Z) (<60 deg)
+                    ang_x = np.arccos(np.clip(np.dot(R[:, 0], [0, 0, 1]), -1, 1))
+                    # Cond 2: Closing(Y) close to Camera Right(X) (<110 deg)
+                    ang_y = np.arccos(np.clip(np.dot(R[:, 1], [1, 0, 0]), -1, 1))
+                    
+                    if ang_x < np.deg2rad(70) and ang_y < np.deg2rad(120):
+                        keep_inds.append(i)
+
+                if keep_inds:
+                    gg = gg[keep_inds]
+                    print(f"[Pipeline] Filtered to top {len(gg)} grasps.")
+                else:
+                    print("[Pipeline] No grasps met criteria. Using default top 5.")
+                    gg = gg[:5]
+
                 if not self.args.no_vis:
                     self._visualize_grasps(gg, data_dict)
                 
-                # Return Top 5 candidates
-                sub_gg = gg[:top_n]
-                return sub_gg.translations, sub_gg.rotation_matrices, sub_gg.widths
+                return gg.translations, gg.rotation_matrices, gg.widths
             else:
                 print("[Pipeline] No valid grasps found.")
         
@@ -208,13 +223,14 @@ class GraspPipeline:
         
         geometries = [cloud]
         
-        # Visualizing top 5 only
+        # Visualizing top 5 only，and Base Right Finger Root Blue Dot
         top_n = min(len(gg), 5)
         for i in range(top_n):
              g = gg[i].to_open3d_geometry(color=(0, 0, 0))
              geometries.extend(g if isinstance(g, list) else [g])
              
-             # Blue Dot at Right Finger Root (+Y side, -X side)
+             # Blue Dot at Right Finger Root (+Y side)
+             # Assumption: X=0 is Tip, so Base is at -g.depth
              pt = gg[i].translation + gg[i].rotation_matrix @ np.array([-0.025, gg[i].width / 2 + 0.002, 0])
              sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
              sphere.translate(pt)
