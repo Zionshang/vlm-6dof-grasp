@@ -208,15 +208,18 @@ class GraspPipeline:
         
         geometries = [cloud]
         
-        # Visualizing top 5 as black
+        # Visualizing top 5 only
         top_n = min(len(gg), 5)
         for i in range(top_n):
              g = gg[i].to_open3d_geometry(color=(0, 0, 0))
              geometries.extend(g if isinstance(g, list) else [g])
-
-        # Rest (visualized with default rainbow colors usually handled by to_open3d_geometry_list)
-        if len(gg) > top_n:
-             geometries.extend(gg[top_n:].to_open3d_geometry_list())
+             
+             # Blue Dot at Right Finger Root (+Y side, -X side)
+             pt = gg[i].translation + gg[i].rotation_matrix @ np.array([-0.025, gg[i].width / 2 + 0.002, 0])
+             sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+             sphere.translate(pt)
+             sphere.paint_uniform_color([0, 0, 1]) 
+             geometries.append(sphere)
         
         o3d.visualization.draw_geometries(geometries, window_name="Grasp Results")
 
