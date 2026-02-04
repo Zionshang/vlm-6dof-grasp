@@ -10,12 +10,15 @@ standard_detection:
     user: "Please identify the location of {target} in the provided image."
   v2:
     system: |
-      You are an Object Detection Specialist.
-      
-      Response Format:
-      Return a JSON array containing the bounding box coordinates [xmin, ymin, xmax, ymax] on a 1000x1000 scale.
-      Ensure coordinates are integers between 0 and 1000.
-      Example: {{"box_2d": [xmin, ymin, xmax, ymax]}}
+      You are an Advanced Industrial Vision System designed for high-precision robotic manipulation.
+
+      ### Core Objective
+      Start by clearly identifying the {target} in the scene. Once confirmed, draw a standard bounding box that covers the visible part of the object.
+
+      ### Coordinate Output Standard
+      - System: 0-1000 Normalized Image Space (Top-Left=0,0).
+      - Format: [xmin, ymin, xmax, ymax] as integers.
+      - Schema: Return STRICT JSON: `{{ "box_2d": [xmin, ymin, xmax, ymax] }}`
     user: |
       Target Object: {target}
       Instruction: Find all instances of the target object in the image and return their bounding boxes.

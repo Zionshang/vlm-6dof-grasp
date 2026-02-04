@@ -75,9 +75,10 @@ class GraspPipeline:
         self.cfg = load_config(str(ROOT / self.args.config))
         
         # 2. VLM Detection Init
-        print(f"[Pipeline] Loading VLM (Model: {self.cfg.get('default_model', 'qwen2.5-vl')})...")
+        detection_model = self.cfg.get("detection_model", "qwen3-vl:8b-instruct-q4_K_M")
+        print(f"[Pipeline] Loading VLM (Model: {detection_model})...")
         self.vlm = StaticDetectionApp(
-            model_name=self.cfg.get("default_model", "qwen2.5-vl"),
+            model_name=detection_model,
             template_name=self.cfg.get("template", "standard_detection.v2"),
             prompts_dir=str(ROOT / "vlm" / self.cfg.get("prompts_dir", "prompts")),
         )
@@ -102,6 +103,16 @@ class GraspPipeline:
         
         print("[Pipeline] Initialization Complete.")
 
+    @staticmethod
+    def expand_boxes(boxes, shape, scale=1.4):
+        h, w = shape[:2]
+        return [[
+            max(0, int((x1+x2)/2 - (x2-x1)*scale/2)),
+            max(0, int((y1+y2)/2 - (y2-y1)*scale/2)),
+            min(w, int((x1+x2)/2 + (x2-x1)*scale/2)),
+            min(h, int((y1+y2)/2 + (y2-y1)*scale/2))
+        ] for x1, y1, x2, y2 in boxes]
+
     def detect_objects(self, prompt, run_id=None):
         # 1. Input Handling
         img_path = None
@@ -122,6 +133,13 @@ class GraspPipeline:
         print(f"[Pipeline] Processing prompt: '{prompt}'")
 
         pixel_boxes, img_path = self.detect_objects(prompt, run_id)
+
+        # Save Original VLM Boxes
+        if pixel_boxes:
+            orig_name = f"{run_id}_origin_vlm.png" if run_id else "origin_vlm.png"
+            self._visualize_vlm(color, pixel_boxes, run_id, filename=orig_name)
+        
+        pixel_boxes = self.expand_boxes(pixel_boxes, color.shape)
         
         if not pixel_boxes:
             print(f"[Pipeline] No objects found for '{prompt}'.")
@@ -174,7 +192,7 @@ class GraspPipeline:
                     # Cond 2: Closing(Y) close to Camera Right(X) (<110 deg)
                     ang_y = np.arccos(np.clip(np.dot(R[:, 1], [1, 0, 0]), -1, 1))
                     
-                    if ang_x < np.deg2rad(70) and ang_y < np.deg2rad(120):
+                    if ang_x < np.deg2rad(70) and ang_y < np.deg2rad(100):
                         keep_inds.append(i)
 
                 if keep_inds:
@@ -193,14 +211,18 @@ class GraspPipeline:
         
         return None, None, None
 
-    def _visualize_vlm(self, color, boxes, run_id=None):
+    def _visualize_vlm(self, color, boxes, run_id=None, filename=None):
         img_vis = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
         for box in boxes:
             x1, y1, x2, y2 = map(int, box)
             cv2.rectangle(img_vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
             
-        filename = f"{run_id}_vlm.png" if run_id else "vlm_result.png"
-        out_path = self.dirs["vlm"] / filename
+        if filename:
+            fname = filename
+        else:
+            fname = f"{run_id}_vlm.png" if run_id else "vlm_result.png"
+
+        out_path = self.dirs["vlm"] / fname
         cv2.imwrite(str(out_path), img_vis)
         print(f"Saved VLM visualization to {out_path}")
 

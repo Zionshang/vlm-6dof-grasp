@@ -1,5 +1,12 @@
 import sys
 from pathlib import Path
+import os
+os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("HTTPS_PROXY", None)
+os.environ.pop("http_proxy", None)
+os.environ.pop("https_proxy", None)
+os.environ.pop("ALL_PROXY", None)
+os.environ.pop("all_proxy", None)
 
 ROOT = Path(__file__).resolve().parent
 sys.path.extend([str(ROOT), str(ROOT / "vlm")])
@@ -9,10 +16,9 @@ from vlm.src.core.config import load_config
 
 if __name__ == "__main__":
     cfg = load_config(str(ROOT / "vlm/config/settings.yaml"))
-    print(f"Loading Model: {cfg.get('default_model')}")
     
     app = GraspSelectionApp(
-        model_name=cfg.get("default_model", "qwen2.5-vl"),
+        model_name=cfg.get("grasp_selection_model", "qwen3-vl:32b-instruct-q4_K_M"),
         prompts_dir=str(ROOT / "vlm/prompts")
     )
 

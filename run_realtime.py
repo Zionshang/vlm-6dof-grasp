@@ -41,7 +41,7 @@ class RealtimeGraspController:
         self.current_prompt = "mug"
         self.running = True
         self.grip_max = get_gripper_max_width(client)
-        model_name = self.pipeline.cfg.get("default_model", "qwen2.5-vl") if hasattr(self.pipeline, "cfg") else "qwen2.5-vl"
+        model_name = self.pipeline.cfg.get("grasp_selection_model", "qwen3-vl:32b-instruct-q4_K_M") if hasattr(self.pipeline, "cfg") else "qwen3-vl:8b-instruct-q4_K_M"
         self.vlm_selector = GraspSelectionApp(model_name=model_name, prompts_dir=str(ROOT / "vlm/prompts"))
         
         # Key Config: Map keys to specific handler functions

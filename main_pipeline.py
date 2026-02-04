@@ -49,7 +49,7 @@ def main():
     # 1. VLM Detection
     print(f"Detecting '{args.prompt}'...")
     vlm = StaticDetectionApp(
-        model_name=cfg.get("default_model", "qwen2.5-vl"),
+        model_name=cfg.get("detection_model", "qwen3-vl:8b-instruct-q4_K_M"),
         template_name=cfg.get("template", "standard_detection.v2"),
         prompts_dir=str(ROOT / "vlm" / cfg.get("prompts_dir", "prompts")),
     )
