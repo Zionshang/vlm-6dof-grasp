@@ -18,8 +18,7 @@ grasp_selection:
       ### Output Requirement
       Return strictly valid JSON.
       {{
-        "selected_id": int,
-        "reason": "string" // Max 15 words. Concise explanation of why this grasp was chosen based on the criteria."
+        "selected_id": int
       }}
     user: |
       Analyze the {num_images} candidates. Which ID is the best Grasp?
