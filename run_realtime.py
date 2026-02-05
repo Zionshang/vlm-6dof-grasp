@@ -211,8 +211,8 @@ class RealtimeGraspController:
             
             # Home
             home_pose = np.array([0.3202, 0.001, 0.1565, -0., 0., 0.])
-            self.client.set_ee_pose(home_pose, gripper_pos=grip_max, preview_time=0.5)
-            time.sleep(1.0)
+            self.client.set_ee_pose(home_pose, gripper_pos=grip_max, preview_time=1.5)
+            time.sleep(1.5)
             
         else:
             print(f"Safety violation: Pose {arm_cmd[:3]} out of bounds!")

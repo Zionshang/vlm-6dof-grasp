@@ -2,6 +2,12 @@
 import numpy as np
 import cv2
 
+def _compress_image(image, max_dim=640):
+    h, w = image.shape[:2]
+    if max(h, w) <= max_dim: return image
+    scale = max_dim / max(h, w)
+    return cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
 def project_grasp_to_2d(trans, rot, width, intrinsic, depth=0.04):
     """
     将 3D 抓取投影到 2D 图像平面。
@@ -140,6 +146,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
     
     vis_images = []
     candidates = []
+    valid_idx = 0
     
     for i in range(num_grasps):
         # 每次都复制一张干净的背景图
@@ -152,6 +159,12 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
         if t[2] <= 0: continue 
         
         pts = project_grasp_to_2d(t, r, w, intrinsic)
+        # >>筛选1：夹爪距离过近
+        width_px = np.linalg.norm(pts[0] - pts[3])
+        if width_px < 70: continue
+        # 筛选2：右指根在左指根左侧
+        if pts[2][0] < pts[1][0]: continue        
+        print(f"ID {valid_idx} width_px: {width_px:.1f}")
         
         # 绘制 U型 夹爪
         # image is RGB, so use RGB colors
@@ -171,14 +184,14 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
         center_base = np.mean(pts[1:3], axis=0).astype(int)
         center_tip = np.mean([pts[0], pts[3]], axis=0).astype(int)
         # 绘制箭头
-        cv2.arrowedLine(vis_img, tuple(center_base), tuple(center_tip), (0, 0, 255), 4, tipLength=0.3)
+        cv2.arrowedLine(vis_img, tuple(center_base), tuple(center_tip), (0, 0, 255), 3, tipLength=0.35)
         
         # 绘制详细 Label
         # 策略：计算抓取投影的 2D 包围盒，将文字放在上方或下方，彻底杜绝遮挡
         min_x, min_y = np.min(pts, axis=0)
         max_x, max_y = np.max(pts, axis=0)
         
-        label = f"ID: {i}"
+        label = f"ID: {valid_idx}"
         font_scale = 1.0 
         thickness = 2    
         
@@ -207,13 +220,14 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
         pose_mat[:3, :3] = r
         pose_mat[:3, 3] = t
         
-        vis_images.append(vis_img)
+        vis_images.append(_compress_image(vis_img))
         candidates.append({
-            "id": i,
+            "id": valid_idx,
             "pose_matrix": pose_mat.tolist(),
             "width": float(w),
             "translation": t.tolist(),
             "rotation": r.tolist()
         })
+        valid_idx += 1
         
     return vis_images, candidates

@@ -104,7 +104,7 @@ class GraspPipeline:
         print("[Pipeline] Initialization Complete.")
 
     @staticmethod
-    def expand_boxes(boxes, shape, scale=1.4):
+    def expand_boxes(boxes, shape, scale=1.5):
         h, w = shape[:2]
         return [[
             max(0, int((x1+x2)/2 - (x2-x1)*scale/2)),
@@ -191,7 +191,7 @@ class GraspPipeline:
                     # Cond 2: Closing(Y) close to Camera Right(X) (<110 deg)
                     ang_y = np.arccos(np.clip(np.dot(R[:, 1], [1, 0, 0]), -1, 1))
                     
-                    if ang_x < np.deg2rad(70) and ang_y < np.deg2rad(100):
+                    if ang_x < np.deg2rad(50) and ang_y < np.deg2rad(100):
                         keep_inds.append(i)
 
                 if keep_inds:

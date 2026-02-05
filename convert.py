@@ -8,7 +8,7 @@ def convert_new(
         current_ee_pose,  # 机械臂当前末端在基座坐标系下的位姿 [x, y, z, rx, ry, rz]
         handeye_rot,  # 手眼标定旋转矩阵 (相机→末端)
         handeye_trans,  # 手眼标定平移向量 (相机→末端)
-        gripper_length=0.04
+        gripper_length=0.045
 ):
     """
     根据 GraspNet 输出 (相机系下的抓取位姿)，计算在机械臂基座系下的抓取位姿。
