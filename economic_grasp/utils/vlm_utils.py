@@ -2,7 +2,7 @@
 import numpy as np
 import cv2
 
-def _compress_image(image, max_dim=640):
+def _compress_image(image, max_dim=480):
     h, w = image.shape[:2]
     if max(h, w) <= max_dim: return image
     scale = max_dim / max(h, w)
@@ -161,9 +161,12 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
         pts = project_grasp_to_2d(t, r, w, intrinsic)
         # >>筛选1：夹爪距离过近
         width_px = np.linalg.norm(pts[0] - pts[3])
+        print(f"Debug: Grasp {i} width_px = {width_px:.1f}")
         if width_px < 70: continue
         # 筛选2：右指根在左指根左侧
-        if pts[2][0] < pts[1][0]: continue        
+        print(f"右-左的x距离{pts[2][0] - pts[1][0]}")  
+        if pts[2][0] < pts[1][0]: continue 
+        # if abs(pts[2][0] - pts[1][0]) < 40: continue   
         print(f"ID {valid_idx} width_px: {width_px:.1f}")
         
         # 绘制 U型 夹爪
