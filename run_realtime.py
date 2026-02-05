@@ -138,7 +138,7 @@ class RealtimeGraspController:
         
         # Get Top 5
         trans_list, rot_list, width_list = self.pipeline.run(color, depth, prompt=self.current_prompt, run_id=timestamp)
-        if trans_list is None: return print("Grasp detection failed.")
+        if trans_list is None: return print("Grasp detection failed or No valid grasps.")
 
         # VLM Selection
         imgs, candidates = vlm_grasp_visualize_batch(
@@ -210,10 +210,8 @@ class RealtimeGraspController:
             time.sleep(1.5)
             
             # Home
-            self.action_home(None, None)
-            state = self.client.get_state()
-            curr_pose = state['ee_pose']
-            self.client.set_ee_pose(curr_pose, gripper_pos=grip_max, preview_time=0.5)
+            home_pose = np.array([0.3202, 0.001, 0.1565, -0., 0., 0.])
+            self.client.set_ee_pose(home_pose, gripper_pos=grip_max, preview_time=0.5)
             time.sleep(1.0)
             
         else:

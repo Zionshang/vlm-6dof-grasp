@@ -133,6 +133,9 @@ class GraspPipeline:
         print(f"[Pipeline] Processing prompt: '{prompt}'")
 
         pixel_boxes, img_path = self.detect_objects(prompt, run_id)
+        if not pixel_boxes:
+            print(f"[Pipeline] No objects found for '{prompt}'.")
+            return None, None, None
 
         # Save Original VLM Boxes
         if pixel_boxes:
@@ -140,10 +143,6 @@ class GraspPipeline:
             self._visualize_vlm(color, pixel_boxes, run_id, filename=orig_name)
         
         pixel_boxes = self.expand_boxes(pixel_boxes, color.shape)
-        
-        if not pixel_boxes:
-            print(f"[Pipeline] No objects found for '{prompt}'.")
-            return None, None, None
 
         # Visualize VLM
         self._visualize_vlm(color, pixel_boxes, run_id)

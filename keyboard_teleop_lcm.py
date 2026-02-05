@@ -93,7 +93,8 @@ def start_keyboard_teleop(
         ee_pose = state["ee_pose"]
         print(
             f"Time elapsed: {time.monotonic() - start_time:.03f}s, "
-            f"x: {ee_pose[0]:.03f}, y: {ee_pose[1]:.03f}, z: {ee_pose[2]:.03f}",
+            f"x: {ee_pose[0]:.03f}, y: {ee_pose[1]:.03f}, z: {ee_pose[2]:.03f}, "
+            f"rx: {ee_pose[3]:.03f}, ry: {ee_pose[4]:.03f}, rz: {ee_pose[5]:.03f}",
             end="\r",
         )
 
