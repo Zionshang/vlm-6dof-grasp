@@ -3,6 +3,7 @@ import time
 import argparse
 import numpy as np
 import cv2
+import threading
 from pathlib import Path
 from pynput import keyboard
 
@@ -44,7 +45,6 @@ class RealtimeGraspController:
         model_name = self.pipeline.cfg.get("grasp_selection_model", "qwen3-vl:32b-instruct-q4_K_M") if hasattr(self.pipeline, "cfg") else "qwen3-vl:8b-instruct-q4_K_M"
         self.vlm_selector = GraspSelectionApp(model_name=model_name, prompts_dir=str(ROOT / "vlm/prompts"))
         
-        import threading
         def _warmup_thread():
             if self.pipeline.vlm:
                 self.pipeline.vlm.llm_client.warmup()
@@ -150,6 +150,9 @@ class RealtimeGraspController:
         trans_list, rot_list, width_list = self.pipeline.run(color, depth, prompt=self.current_prompt, run_id=timestamp)
         if trans_list is None: return print("Grasp detection failed or No valid grasps.")
 
+        # Unload detection model (8b)
+        if self.pipeline.vlm: self.pipeline.vlm.llm_client.unload()
+
         # VLM Selection
         imgs, candidates = vlm_grasp_visualize_batch(
             color, trans_list, rot_list, width_list, 
@@ -176,11 +179,17 @@ class RealtimeGraspController:
             best_id = int(best_id)
             if 0 <= best_id < len(candidates):
                 idx = best_id
-        
         print(f"[VLM] Final Decision -> ID: {idx}")
-        if input("Execute grasp? (y/n) > ").lower() != 'y': return
+        
+        should_exec = input("Execute grasp? (y/n) > ").lower() == 'y'
+        if should_exec:
+            self._execute_grasp_cmd(candidates[idx])
+        
+        # Reload 8b model 
+        if self.pipeline.vlm: 
+            threading.Thread(target=self.pipeline.vlm.llm_client.warmup, daemon=True).start()
 
-        sel = candidates[idx]
+    def _execute_grasp_cmd(self, sel):
         # Convert
         state = self.client.get_state()
         curr_pose = state['ee_pose']

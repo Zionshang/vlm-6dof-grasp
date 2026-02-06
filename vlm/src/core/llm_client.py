@@ -54,3 +54,12 @@ class OllamaClient(LLMClient):
             print("[Ollama] Model warmed up.")
         except Exception as e:
             print(f"[Ollama] Warmup failed (Non-fatal): {e}")
+
+    def unload(self):
+        """Unloads the model from memory to free VRAM."""
+        try:
+            # Directly use ollama lib for control commands to force unload
+            ollama.generate(model=self.model_name, prompt="", keep_alive=0)
+            print(f"[Ollama] Unloaded model {self.model_name}")
+        except Exception as e:
+            print(f"[Ollama] Failed to unload {self.model_name}: {e}")
