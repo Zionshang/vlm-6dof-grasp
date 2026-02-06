@@ -44,6 +44,16 @@ class RealtimeGraspController:
         model_name = self.pipeline.cfg.get("grasp_selection_model", "qwen3-vl:32b-instruct-q4_K_M") if hasattr(self.pipeline, "cfg") else "qwen3-vl:8b-instruct-q4_K_M"
         self.vlm_selector = GraspSelectionApp(model_name=model_name, prompts_dir=str(ROOT / "vlm/prompts"))
         
+        import threading
+        def _warmup_thread():
+            if self.pipeline.vlm:
+                self.pipeline.vlm.llm_client.warmup()
+            if self.vlm_selector:
+                self.vlm_selector.llm_client.warmup()
+        
+        self.warmup_thread = threading.Thread(target=_warmup_thread, daemon=True)
+        self.warmup_thread.start()
+
         # Key Config: Map keys to specific handler functions
         self.key_actions = {
             keyboard.KeyCode.from_char("h"): self.action_grasp,
@@ -193,26 +203,22 @@ class RealtimeGraspController:
             # 1. Move to Target (Keep Open)
             ready_pose = arm_cmd.copy()
             ready_pose[2] += 0.05
-            self.client.set_ee_pose(ready_pose, gripper_pos=grip_max, preview_time=2.0)
-            time.sleep(2.5)
-            self.client.set_ee_pose(arm_cmd, gripper_pos=grip_max, preview_time=0.5)
-            time.sleep(1)
-            
-            # 2. Grasp (Close to target_close_width)
-            # Call set_ee_pose again with same arm pose but new gripper width
+            self.client.set_ee_pose(ready_pose, gripper_pos=self.grip_max, preview_time=1)
+            time.sleep(1.2)
+            self.client.set_ee_pose(arm_cmd, gripper_pos=self.grip_max, preview_time=0.5)
+            time.sleep(0.7)
             self.client.set_ee_pose(arm_cmd, gripper_pos=target_close_width, preview_time=0.5)
-            time.sleep(1.0)
-            
-            # 3. Lift up 10cm
+            time.sleep(0.8)
+        
             lift_pose = arm_cmd.copy()
             lift_pose[2] += 0.1
-            self.client.set_ee_pose(lift_pose, gripper_pos=target_close_width, preview_time=1.0)
-            time.sleep(1.5)
-            
-            # Home
+            self.client.set_ee_pose(lift_pose, gripper_pos=target_close_width, preview_time=0.5)
+            time.sleep(0.8)
+
             home_pose = np.array([0.3202, 0.001, 0.1565, -0., 0., 0.])
-            self.client.set_ee_pose(home_pose, gripper_pos=grip_max, preview_time=1.5)
-            time.sleep(1.5)
+            self.client.set_ee_pose(home_pose, gripper_pos=target_close_width, preview_time=1.0)
+            time.sleep(1.2)
+            self.client.set_ee_pose(home_pose, gripper_pos=self.grip_max, preview_time=0.5)
             
         else:
             print(f"Safety violation: Pose {arm_cmd[:3]} out of bounds!")
