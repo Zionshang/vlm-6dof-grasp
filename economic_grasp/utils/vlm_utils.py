@@ -162,7 +162,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
         # >>筛选1：夹爪距离过近
         width_px = np.linalg.norm(pts[0] - pts[3])
         print(f"Debug: Grasp {i} width_px = {width_px:.1f}")
-        if width_px < 70: continue
+        if width_px < 73: continue
         # 筛选2：右指根在左指根左下
         print(f"右-左的x距离{pts[2][0] - pts[1][0]}, y距离{pts[2][1] - pts[1][1]}")  
         if pts[2][0] < pts[1][0] and pts[2][1] > pts[1][1]: continue 

@@ -82,7 +82,7 @@ class GraspLcmNode:
         result_payload = b'\x01' if success else b'\x00'
         self.lc.publish("GRASP_RESULT", result_payload)
         print(f"[LCM] Result Sent: {'SUCCESS' if success else 'FAILURE'}")
-        
+
     def execute_grasp(self, prompt):
         # 0. Move to Ready Pose
         ready_pose = np.array([0.25, 0.0, 0.17, 0.0, 1.0, 0.0])
@@ -124,8 +124,10 @@ class GraspLcmNode:
             img_paths.append(p)
 
         vlm_res = self.vlm_selector.run(img_paths)
+        print(f"[VLM] Full Response: {vlm_res}")
         best_id = int(vlm_res.get("selected_id", 0)) if isinstance(vlm_res, dict) else 0
         idx = best_id if 0 <= best_id < len(candidates) else 0
+        print(f"[VLM] Final Decision -> ID: {idx}")
         
         sel = candidates[idx]
         
