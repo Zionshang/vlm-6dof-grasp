@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 import cv2
 import numpy as np
 import torch
@@ -82,6 +83,16 @@ class GraspPipeline:
             template_name=self.cfg.get("template", "standard_detection.v2"),
             prompts_dir=str(ROOT / "vlm" / self.cfg.get("prompts_dir", "prompts")),
         )
+
+        # Ensure VLM is unloaded to free VRAM for PyTorch models
+        try:
+            print("[Pipeline] Unloading VLM to free VRAM for Grasp Engine...")
+            self.vlm.llm_client.unload()
+            time.sleep(3) # Wait for VRAM release
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception as e:
+            print(f"[Pipeline] Warning: Failed to unload VLM: {e}")
         
         # 3. Segmentation Init
         self.sam = None
@@ -184,7 +195,7 @@ class GraspPipeline:
             if len(gg) > 0:
                 keep_inds = []
                 for i in range(len(gg)):
-                    if len(keep_inds) >= 5: break
+                    if len(keep_inds) >= 8: break
                     R = gg[i].rotation_matrix
                     # Cond 1: Approach(X) close to Vertical(Z) (<60 deg)
                     ang_x = np.arccos(np.clip(np.dot(R[:, 0], [0, 0, 1]), -1, 1))
@@ -198,8 +209,8 @@ class GraspPipeline:
                     gg = gg[keep_inds]
                     print(f"[Pipeline] Filtered to top {len(gg)} grasps.")
                 else:
-                    print("[Pipeline] No grasps met criteria. Using default top 5.")
-                    gg = gg[:5]
+                    print("[Pipeline] No grasps met criteria. Using default top 8.")
+                    gg = gg[:8]
 
                 if not self.args.no_vis:
                     self._visualize_grasps(gg, data_dict)
@@ -244,8 +255,8 @@ class GraspPipeline:
         
         geometries = [cloud]
         
-        # Visualizing top 5 only，and Base Right Finger Root Blue Dot
-        top_n = min(len(gg), 5)
+        # Visualizing top 8 only，and Base Right Finger Root Blue Dot
+        top_n = min(len(gg), 8)
         for i in range(top_n):
              g = gg[i].to_open3d_geometry(color=(0, 0, 0))
              geometries.extend(g if isinstance(g, list) else [g])

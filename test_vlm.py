@@ -18,7 +18,7 @@ if __name__ == "__main__":
     cfg = load_config(str(ROOT / "vlm/config/settings.yaml"))
     
     app = GraspSelectionApp(
-        model_name=cfg.get("grasp_selection_model", "qwen3-vl:32b-instruct-q4_K_M"),
+        model_name=cfg.get("grasp_selection_model", "qwen3-vl:8b-instruct-q4_K_M"),
         prompts_dir=str(ROOT / "vlm/prompts")
     )
 

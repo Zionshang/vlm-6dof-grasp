@@ -12,9 +12,9 @@ class OllamaClient(LLMClient):
         self.model_name = model_name
 
     def generate(self, prompt: Union[str, Dict[str, str]], images: Optional[List[Union[str, bytes]]] = None, **kwargs) -> str:
-        # Default keep_alive to 1 hour if not specified to prevent frequent reloads
+        # Default keep_alive to 10 min if not specified
         if 'keep_alive' not in kwargs:
-            kwargs['keep_alive'] = '1h'
+            kwargs['keep_alive'] = '10m'
 
         messages = []
         
@@ -50,7 +50,7 @@ class OllamaClient(LLMClient):
         try:
             print(f"[Ollama] Warming up model {self.model_name}...")
             # Use a very simple prompt with no images just to load weights
-            self.generate("Hello", keep_alive='1h')
+            self.generate("Hello", keep_alive='10m')
             print("[Ollama] Model warmed up.")
         except Exception as e:
             print(f"[Ollama] Warmup failed (Non-fatal): {e}")

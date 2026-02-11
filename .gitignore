@@ -86,3 +86,6 @@ runs
 # --- checkpoint ---
 economic_grasp/checkpoint/economicgrasp_epoch10.tar
 economic_grasp/checkpoint/
+
+# --- LCM 临时文件 ---
+lcm_Transport/

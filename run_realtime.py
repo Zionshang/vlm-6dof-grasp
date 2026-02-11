@@ -42,18 +42,9 @@ class RealtimeGraspController:
         self.current_prompt = "mug"
         self.running = True
         self.grip_max = get_gripper_max_width(client)
-        model_name = self.pipeline.cfg.get("grasp_selection_model", "qwen3-vl:32b-instruct-q4_K_M") if hasattr(self.pipeline, "cfg") else "qwen3-vl:8b-instruct-q4_K_M"
+        model_name = self.pipeline.cfg.get("grasp_selection_model", "qwen3-vl:8b-instruct-q4_K_M") if hasattr(self.pipeline, "cfg") else "qwen3-vl:8b-instruct-q4_K_M"
         self.vlm_selector = GraspSelectionApp(model_name=model_name, prompts_dir=str(ROOT / "vlm/prompts"))
         
-        def _warmup_thread():
-            if self.pipeline.vlm:
-                self.pipeline.vlm.llm_client.warmup()
-            if self.vlm_selector:
-                self.vlm_selector.llm_client.warmup()
-        
-        self.warmup_thread = threading.Thread(target=_warmup_thread, daemon=True)
-        self.warmup_thread.start()
-
         # Key Config: Map keys to specific handler functions
         self.key_actions = {
             keyboard.KeyCode.from_char("h"): self.action_grasp,
@@ -156,7 +147,7 @@ class RealtimeGraspController:
         # VLM Selection
         imgs, candidates = vlm_grasp_visualize_batch(
             color, trans_list, rot_list, width_list, 
-            self.pipeline.grasp_engine.intrinsic, top_k=5
+            self.pipeline.grasp_engine.intrinsic, top_k=8
         )
         savedir = ROOT / "output/2D_grasp"
         if savedir.exists(): shutil.rmtree(savedir)
@@ -185,10 +176,6 @@ class RealtimeGraspController:
         if should_exec:
             self._execute_grasp_cmd(candidates[idx])
         
-        # Reload 8b model 
-        if self.pipeline.vlm: 
-            threading.Thread(target=self.pipeline.vlm.llm_client.warmup, daemon=True).start()
-
     def _execute_grasp_cmd(self, sel):
         # Convert
         state = self.client.get_state()
@@ -212,21 +199,21 @@ class RealtimeGraspController:
             # 1. Move to Target (Keep Open)
             ready_pose = arm_cmd.copy()
             ready_pose[2] += 0.05
-            self.client.set_ee_pose(ready_pose, gripper_pos=self.grip_max, preview_time=1)
-            time.sleep(1.2)
+            self.client.set_ee_pose(ready_pose, gripper_pos=self.grip_max, preview_time=1.3)
+            time.sleep(1.5)
             self.client.set_ee_pose(arm_cmd, gripper_pos=self.grip_max, preview_time=0.5)
             time.sleep(0.7)
             self.client.set_ee_pose(arm_cmd, gripper_pos=target_close_width, preview_time=0.5)
             time.sleep(0.8)
         
             lift_pose = arm_cmd.copy()
-            lift_pose[2] += 0.1
+            lift_pose[2] += 0.06
             self.client.set_ee_pose(lift_pose, gripper_pos=target_close_width, preview_time=0.5)
             time.sleep(0.8)
 
             home_pose = np.array([0.3202, 0.001, 0.1565, -0., 0., 0.])
-            self.client.set_ee_pose(home_pose, gripper_pos=target_close_width, preview_time=1.0)
-            time.sleep(1.2)
+            self.client.set_ee_pose(home_pose, gripper_pos=target_close_width, preview_time=1.5)
+            time.sleep(1.5)
             self.client.set_ee_pose(home_pose, gripper_pos=self.grip_max, preview_time=0.5)
             
         else:
@@ -273,7 +260,7 @@ def main():
     # 4. Reset Robot to Ready Pose
     print("Moving to ready pose...")
     client.reset_to_home()
-    ready_pose = np.array([0.25, 0.0, 0.17, 0.0, 1.0, 0.0])
+    ready_pose = np.array([0.25, 0.0, 0.17, 0.0, 0.95, 0.0])
     client.set_ee_pose(ready_pose, get_gripper_max_width(client), preview_time=1.5)
     time.sleep(2)
     # prep_poses = [

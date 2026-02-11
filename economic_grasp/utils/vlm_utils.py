@@ -64,6 +64,35 @@ def project_grasp_to_2d(trans, rot, width, intrinsic, depth=0.04):
     
     return np.stack([U, V], axis=1).astype(int)
 
+def _draw_id_label(vis_img, pts, valid_idx):
+    min_x, min_y = np.min(pts, axis=0)
+    max_x, max_y = np.max(pts, axis=0)
+    
+    label = f"ID: {valid_idx}"
+    font_scale = 1.0 
+    thickness = 2    
+    
+    (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+    
+    # 优先放在包围盒上方
+    text_x = int((min_x + max_x) // 2 - tw // 2)
+    text_y = int(min_y - 40)
+    
+    # 如果上方超出图片上边缘，则放到下方
+    if text_y - th < 0:
+            text_y = int(max_y + th + 40)
+    
+    # 左右边界保护
+    text_x = max(2, min(text_x, vis_img.shape[1] - tw - 2))
+    
+    # 绘制白色实心背景框
+    box_tl = (text_x - 4, text_y - th - 4)
+    box_br = (text_x + tw + 4, text_y + 4)
+    
+    cv2.rectangle(vis_img, box_tl, box_br, (255, 255, 255), -1)
+    cv2.putText(vis_img, label, (text_x, text_y), 
+                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
+
 def vlm_grasp_visualize(image, trans, rot, width, intrinsic, top_k=5):
     # 此函数保持不变，用于单图概览（Legacy）
     """
@@ -123,7 +152,7 @@ def vlm_grasp_visualize(image, trans, rot, width, intrinsic, top_k=5):
         
     return vis_img, candidates
 
-def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
+def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8):
     """
     生成【多张】独立的图像，每张图只包含一个抓取候选。
     彻底解决重叠问题。
@@ -148,6 +177,8 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
     candidates = []
     valid_idx = 0
     
+    best_candidate_backup = None
+
     for i in range(num_grasps):
         # 每次都复制一张干净的背景图
         vis_img = image.copy()
@@ -156,68 +187,67 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
         r = rot[i]
         w = width[i]
         
+        pts = project_grasp_to_2d(t, r, w, intrinsic)
+        
+        if i == 0:
+            best_candidate_backup = (vis_img.copy(), pts, t, r, w)
+
         if t[2] <= 0: continue 
         
-        pts = project_grasp_to_2d(t, r, w, intrinsic)
-        # >>筛选1：夹爪距离过近
+        # 1. 夹爪2D宽度
         width_px = np.linalg.norm(pts[0] - pts[3])
-        print(f"Debug: Grasp {i} width_px = {width_px:.1f}")
-        if width_px < 73: continue
-        # 筛选2：右指根在左指根左下
-        print(f"右-左的x距离{pts[2][0] - pts[1][0]}, y距离{pts[2][1] - pts[1][1]}")  
-        if pts[2][0] < pts[1][0] and pts[2][1] > pts[1][1]: continue 
-        # if abs(pts[2][0] - pts[1][0]) < 40: continue   
-        print(f"ID {valid_idx} width_px: {width_px:.1f}")
+        # 2. 指根相对位置
+        dx = pts[2][0] - pts[1][0]
+        dy = pts[2][1] - pts[1][1]
+        # 3. 抓取夹角
+        center_base = np.mean(pts[1:3], axis=0).astype(int)
+        center_tip = np.mean([pts[0], pts[3]], axis=0).astype(int)
+        vec_base = pts[2] - pts[1]
+        vec_arrow = center_tip - center_base
         
-        # 绘制 U型 夹爪
-        # image is RGB, so use RGB colors
+        angle_deg = 0.0
+        norm_base = np.linalg.norm(vec_base)
+        norm_arrow = np.linalg.norm(vec_arrow)
+        if norm_base > 0 and norm_arrow > 0:
+            cos_theta = np.dot(vec_base, vec_arrow) / (norm_base * norm_arrow)
+            cos_theta = np.clip(cos_theta, -1.0, 1.0)
+            angle_deg = np.degrees(np.arccos(cos_theta))
+            if angle_deg > 90: angle_deg = 180 - angle_deg
+
+        print(f"[Debug G{i}] Width={width_px:.1f}px | dPos=({dx}, {dy}) | Angle={angle_deg:.1f} deg")
+
+        # --- 无论好坏，先画出几何结构 (Review用) ---
         color_finger = (255, 0, 0) # Red
         color_base = (0, 255, 0)   # Green
-        thick = 3 # 加粗一点，反正不重叠
-        
+        thick = 3 
         cv2.line(vis_img, tuple(pts[0]), tuple(pts[1]), color_finger, thick)
         cv2.line(vis_img, tuple(pts[1]), tuple(pts[2]), color_base, thick)
         cv2.line(vis_img, tuple(pts[2]), tuple(pts[3]), color_finger, thick)
-        
-        # 绘制右指根蓝色圆点 (pts[2])
         cv2.circle(vis_img, tuple(pts[2]), 8, (0, 0, 255), -1)
-
-        # 绘制抓取方向箭头 (蓝色箭头: 底座 -> 指尖)
-        # 计算中心点
-        center_base = np.mean(pts[1:3], axis=0).astype(int)
-        center_tip = np.mean([pts[0], pts[3]], axis=0).astype(int)
-        # 绘制箭头
         cv2.arrowedLine(vis_img, tuple(center_base), tuple(center_tip), (0, 0, 255), 3, tipLength=0.35)
-        
-        # 绘制详细 Label
-        # 策略：计算抓取投影的 2D 包围盒，将文字放在上方或下方，彻底杜绝遮挡
-        min_x, min_y = np.min(pts, axis=0)
-        max_x, max_y = np.max(pts, axis=0)
-        
-        label = f"ID: {valid_idx}"
-        font_scale = 1.0 
-        thickness = 2    
-        
-        (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-        
-        # 优先放在包围盒上方
-        text_x = int((min_x + max_x) // 2 - tw // 2)
-        text_y = int(min_y - 40)
-        
-        # 如果上方超出图片上边缘，则放到下方
-        if text_y - th < 0:
-             text_y = int(max_y + th + 40)
-        
-        # 左右边界保护
-        text_x = max(2, min(text_x, vis_img.shape[1] - tw - 2))
-        
-        # 绘制白色实心背景框
-        box_tl = (text_x - 4, text_y - th - 4)
-        box_br = (text_x + tw + 4, text_y + 4)
-        
-        cv2.rectangle(vis_img, box_tl, box_br, (255, 255, 255), -1)
-        cv2.putText(vis_img, label, (text_x, text_y), 
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
+
+        # --- 统一筛选 ---
+        cond_width = width_px < 77
+        cond_pose = pts[2][0] < pts[1][0] and pts[2][1] > pts[1][1]
+        cond_angle = angle_deg < 45
+        cond_down = center_tip[1] > center_base[1]
+
+        if cond_width or cond_pose or cond_angle or cond_down:
+            reasons = []
+            if cond_width: reasons.append("TooNarrow")
+            if cond_pose: reasons.append("BadPose")
+            if cond_angle: reasons.append("BadAngle")
+            if cond_down: reasons.append("PointingDown")
+            fail_str = ', '.join(reasons)
+            print(f" -> SKIPPED G{i}: {fail_str}")
+            
+            # [Added] 保存被筛选掉的图片用于Debug
+            cv2.putText(vis_img, f"REJECT: {fail_str}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            cv2.imwrite(f"output/vlm/origin_{i}.jpg", vis_img[..., ::-1]) # RGB->BGR保存
+            continue
+
+        # --- 如果通过筛选，绘制ID并添加到列表 ---
+        _draw_id_label(vis_img, pts, valid_idx)
 
         pose_mat = np.eye(4)
         pose_mat[:3, :3] = r
@@ -232,5 +262,26 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=5):
             "rotation": r.tolist()
         })
         valid_idx += 1
+
+    # [Added] 兜底逻辑：如果没有任何候选通过筛选，强制保留第一个
+    if not candidates and best_candidate_backup is not None:
+        print("[Warn] All candidates rejected. Force keeping the ID:0 candidate.")
+        vis_img, pts, t, r, w = best_candidate_backup
+        
+        # 重新绘制 Label (Hardcoded ID: 0)
+        _draw_id_label(vis_img, pts, 0)
+
+        pose_mat = np.eye(4)
+        pose_mat[:3, :3] = r
+        pose_mat[:3, 3] = t
+        
+        vis_images.append(_compress_image(vis_img))
+        candidates.append({
+            "id": 0,
+            "pose_matrix": pose_mat.tolist(),
+            "width": float(w),
+            "translation": t.tolist(),
+            "rotation": r.tolist()
+        })
         
     return vis_images, candidates
