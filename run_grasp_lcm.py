@@ -182,9 +182,18 @@ class GraspLcmNode:
                               curr_pose, HAND_EYE_R, HAND_EYE_T)
         
         x, y, z = arm_cmd[:3]
-        if not ((0 <= x <= 0.7) and (-0.6 <= y <= 0.6) and (-0.02 <= z <= 0.7)):
+        if not ((0 <= x <= 0.73) and (-0.6 <= y <= 0.6) and (z <= 0.7)):
             print(f"[Error] Safety violation: {arm_cmd}, out of bounds!")
             return False, "safety_violation"
+        print(f"[Info] Converted Arm Command: {arm_cmd}")
+
+        # Ry alignment for better pose
+        ry = arm_cmd[4]
+        if 0 <= ry <= 0.7:
+            print(f"[Adjust] Original Ry {ry:.3f}")
+            # Map [0, 0.7] -> [0.7, 0.8] linearly
+            arm_cmd[4] = 0.7 + (ry / 0.7) * 0.1
+            print(f"[Adjust] New Ry -> {arm_cmd[4]:.3f}")
 
         # 4. Execution Sequence
         print(f"Executing Grasp at {arm_cmd}...")
@@ -203,9 +212,12 @@ class GraspLcmNode:
         time.sleep(0.8)
         
         lift_pose = arm_cmd.copy()
-        lift_pose[2] += 0.06
-        self.client.set_ee_pose(lift_pose, gripper_pos=target_width, preview_time=0.5)
-        time.sleep(0.8)
+        lift_pose[2] += 0.1  # lift +10cm
+        lift_pose[0] += 0.07  # forward +7cm
+        lift_pose[3] = 0.0   # rx = 0
+        lift_pose[5] = 0.0   # rz = 0
+        self.client.set_ee_pose(lift_pose, gripper_pos=target_width, preview_time=1)
+        time.sleep(1.2)
 
         home_pose = np.array([0.3202, 0.001, 0.1565, -0., 0., 0.])
         self.client.set_ee_pose(home_pose, gripper_pos=target_width, preview_time=1.5)

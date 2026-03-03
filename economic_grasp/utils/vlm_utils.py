@@ -227,7 +227,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8):
         cv2.arrowedLine(vis_img, tuple(center_base), tuple(center_tip), (0, 0, 255), 3, tipLength=0.35)
 
         # --- 统一筛选 ---
-        cond_width = width_px < 77
+        cond_width = width_px < 70
         cond_pose = pts[2][0] < pts[1][0] and pts[2][1] > pts[1][1]
         cond_angle = angle_deg < 45
         cond_down = center_tip[1] > center_base[1]
