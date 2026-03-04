@@ -196,7 +196,7 @@ class GraspLcmNode:
         # 3. Check Bounds
         x, y, z = target_pos
         # 4. Compute Approach Pose Logic: x-0.17, y, z+0.17 | Rot: 0.0, 0.9, 0.0
-        approach_pose = np.array([x - 0.17, y, z + 0.17, 0.0, 0.9, 0.0])
+        approach_pose = np.array([x - 0.2, y, z + 0.17, 0.0, 0.83, 0.0])
         
         # Check Approach Pose Safety
         ax, ay, az = approach_pose[:3]
