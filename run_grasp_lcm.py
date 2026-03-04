@@ -213,8 +213,8 @@ class GraspLcmNode:
 
         # 5. Move Closer
         print(f"[Approach] Moving to closer view: {approach_pose}")
-        self.client.set_ee_pose(approach_pose, 0.086, preview_time=1)
-        time.sleep(1.2)
+        self.client.set_ee_pose(approach_pose, 0.086, preview_time=1.5)
+        time.sleep(1.5)
 
     def execute_grasp(self, prompt):
         # 0. Coarse Approach (Replaces simple Ready Pose)
@@ -314,7 +314,7 @@ class GraspLcmNode:
         
         #4. Lift 
         lift_pose = arm_cmd.copy()
-        lift_pose[2] += 0.1  # lift +10cm
+        lift_pose[2] += 0.08  # lift +10cm
         lift_pose[0] += 0.05  # forward +5cm
         lift_pose[3] = 0.0   # rx = 0
         lift_pose[5] = 0.0   # rz = 0
