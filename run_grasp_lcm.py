@@ -153,7 +153,7 @@ class GraspLcmNode:
             # 6. Safety Clamp 
             x, y, z = current_target[:3]
             # Ensure we don't correct into unsafe zones
-            if not ((0 <= x <= 0.75) and (-0.6 <= y <= 0.6) and (z <= 0.7)):
+            if not ((0 <= x <= 0.75) and (-0.65 <= y <= 0.65) and (z <= 0.7)):
                 print(f"[Control] Correction unsafe {current_target[:3]}. Aborting.")
                 break
 
@@ -196,11 +196,11 @@ class GraspLcmNode:
         # 3. Check Bounds
         x, y, z = target_pos
         # 4. Compute Approach Pose Logic: x-0.17, y, z+0.17 | Rot: 0.0, 0.9, 0.0
-        approach_pose = np.array([x - 0.15, y, z + 0.14, 0.0, 0.88, 0.0])
+        approach_pose = np.array([x - 0.13, y, z + 0.10, 0.0, 0.8, 0.0])
         
         # Check Approach Pose Safety
         ax, ay, az = approach_pose[:3]
-        if not ((0 <= ax <= 0.73) and (-0.6 <= ay <= 0.6) and (az <= 0.7)):
+        if not ((0 <= ax <= 0.75) and (-0.65 <= ay <= 0.65) and (az <= 0.7)):
              print(f"[Approach] Approach pose unsafe: {approach_pose}. Staying.")
              return
 
@@ -270,7 +270,7 @@ class GraspLcmNode:
                               curr_pose, HAND_EYE_R, HAND_EYE_T)
         
         x, y, z = arm_cmd[:3]
-        if not ((0 <= x <= 0.73) and (-0.6 <= y <= 0.6) and (z <= 0.7)):
+        if not ((0 <= x <= 0.75) and (-0.65 <= y <= 0.65) and (z <= 0.7)):
             print(f"[Error] Safety violation: {arm_cmd}, out of bounds!")
             return False, "safety_violation"
         print(f"[Info] Converted Arm Command: {arm_cmd}")
@@ -304,7 +304,7 @@ class GraspLcmNode:
         #4. Lift 
         lift_pose = arm_cmd.copy()
         lift_pose[2] += 0.1  # lift +10cm
-        lift_pose[0] += 0.07  # forward +7cm
+        lift_pose[0] += 0.05  # forward +5cm
         lift_pose[3] = 0.0   # rx = 0
         lift_pose[5] = 0.0   # rz = 0
         self.client.set_ee_pose(lift_pose, gripper_pos=target_width, preview_time=1)
