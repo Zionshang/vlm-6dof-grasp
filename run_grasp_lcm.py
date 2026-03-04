@@ -163,7 +163,8 @@ class GraspLcmNode:
 
     def execute_grasp(self, prompt):
         # 0. Move to Ready Pose
-        ready_pose = np.array([0.25, 0.0, 0.17, 0.0, 1.0, 0.0])
+        # ready_pose = np.array([0.25, 0.0, 0.17, 0.0, 1.0, 0.0])
+        ready_pose = np.array([0.476, 0.0, 0.1, 0.0, 0.767, 0.0])
         print(f"[Robot] Moving to Ready Pose...")
         self.client.set_ee_pose(ready_pose, 0.086, preview_time=1.5)
         time.sleep(2)
@@ -210,14 +211,14 @@ class GraspLcmNode:
         
         sel = candidates[idx]
 
-        # Debug Confirmation
-        try:
-             prompt = input(f"\n[DEBUG] Execute Grasp ID {idx}? (y/n) > ").lower()
-             if prompt != 'y':
-                print("[DEBUG] User cancelled.")
-                return False, "cancelled_by_user"
-        except Exception: 
-            pass # Non-blocking in case of headless
+        # # Debug Confirmation
+        # try:
+        #      prompt = input(f"\n[DEBUG] Execute Grasp ID {idx}? (y/n) > ").lower()
+        #      if prompt != 'y':
+        #         print("[DEBUG] User cancelled.")
+        #         return False, "cancelled_by_user"
+        # except Exception: 
+        #     pass # Non-blocking in case of headless
         
         # 3. Coordinate Conversion & Safety Check
         curr_pose = self.client.get_state()['ee_pose']
@@ -266,8 +267,8 @@ class GraspLcmNode:
         time.sleep(1.2)
         # 5. Return Home
         home_pose = np.array([0.3202, 0.001, 0.1565, -0., 0., 0.])
-        self.client.set_ee_pose(home_pose, gripper_pos=target_width, preview_time=1.5)
-        time.sleep(1.5)
+        self.client.set_ee_pose(home_pose, gripper_pos=target_width, preview_time=2)
+        time.sleep(2)
         
         return True, "success"
     
