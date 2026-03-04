@@ -209,7 +209,7 @@ class GraspLcmNode:
         ax, ay, az = approach_pose[:3]
         if not ((0 <= ax <= 0.75) and (-0.65 <= ay <= 0.65) and (az <= 0.7)):
              print(f"[Approach] Approach pose unsafe: {approach_pose}. Staying.")
-             return
+             return "approach_unsafe"
 
         # 5. Move Closer
         print(f"[Approach] Moving to closer view: {approach_pose}")
@@ -220,8 +220,9 @@ class GraspLcmNode:
         # 0. Coarse Approach (Replaces simple Ready Pose)
         approach_res = self._approach_target(prompt)
         if approach_res == "detect_none":
-            print("[Error] Could not find target in approach phase.")
             return False, "detect_none"
+        elif approach_res == "approach_unsafe":
+            return False, "approach_unsafe"
 
         # 1. Capture & Detection (Flush buffer first)
         for _ in range(20): 
