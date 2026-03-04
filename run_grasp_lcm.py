@@ -118,6 +118,49 @@ class GraspLcmNode:
         self.client.reset_to_home()
         return True
 
+    def _safe_move_with_correction(self, target_pose, gripper_pos, preview_time=0.5, retries=1):
+        """
+        Executes a move with closed-loop error correction based on end-effector state feedback.
+        """
+        # 1. Initial Command
+        self.client.set_ee_pose(target_pose, gripper_pos=gripper_pos, preview_time=preview_time)
+        time.sleep(preview_time + 0.3) 
+
+        current_target = target_pose.copy() # We correct *relative to* the initial command
+        
+        for i in range(retries):
+            # 2. Get Actual State vs Original Target
+            curr_state = self.client.get_state()
+            if not curr_state: break
+            
+            curr_pos = np.array(curr_state['ee_pose'][:3])
+            desired_pos = target_pose[:3] 
+            
+            # 3. Calculate Global Error (Where I am vs Where I wanted to go)
+            pos_error = desired_pos - curr_pos
+            error_norm = np.linalg.norm(pos_error)
+            
+            # 4. Threshold (5mm)
+            if error_norm < 0.005: 
+                break
+            
+            print(f"[Control] Correction Loop {i+1}: Global Error={error_norm*1000:.1f}mm")
+            
+            # 5. Compute Correction (Gain = 0.8)
+            correction = pos_error * 0.8 
+            current_target[:3] += correction
+            
+            # 6. Safety Clamp 
+            x, y, z = current_target[:3]
+            # Ensure we don't correct into unsafe zones
+            if not ((0 <= x <= 0.75) and (-0.6 <= y <= 0.6) and (z <= 0.7)):
+                print(f"[Control] Correction unsafe {current_target[:3]}. Aborting.")
+                break
+
+            # 7. Apply Correction
+            self.client.set_ee_pose(current_target, gripper_pos=gripper_pos, preview_time=0.3)
+            time.sleep(0.4)
+
     def execute_grasp(self, prompt):
         # 0. Move to Ready Pose
         ready_pose = np.array([0.25, 0.0, 0.17, 0.0, 1.0, 0.0])
@@ -201,16 +244,19 @@ class GraspLcmNode:
         target_width = max(0.0, width - 0.05)
         
         # Approach -> Reach -> Grasp -> Lift -> Return
+        # 1. Approach
         pre_pose = arm_cmd.copy()
+        pre_pose[0] -= 0.06  # backward -6cm
         pre_pose[2] += 0.05
+        self._safe_move_with_correction(pre_pose, gripper_pos=self.grip_max, preview_time=1.3, retries=1)
         
-        self.client.set_ee_pose(pre_pose, gripper_pos=self.grip_max, preview_time=1.3)
-        time.sleep(1.5)
-        self.client.set_ee_pose(arm_cmd, gripper_pos=self.grip_max, preview_time=0.5)
-        time.sleep(0.7)
+        # 2. Reach
+        self._safe_move_with_correction(arm_cmd, gripper_pos=self.grip_max, preview_time=0.5, retries=1)
+        # 3. Grasp
         self.client.set_ee_pose(arm_cmd, gripper_pos=target_width, preview_time=0.5)
         time.sleep(0.8)
         
+        #4. Lift 
         lift_pose = arm_cmd.copy()
         lift_pose[2] += 0.1  # lift +10cm
         lift_pose[0] += 0.07  # forward +7cm
@@ -218,7 +264,7 @@ class GraspLcmNode:
         lift_pose[5] = 0.0   # rz = 0
         self.client.set_ee_pose(lift_pose, gripper_pos=target_width, preview_time=1)
         time.sleep(1.2)
-
+        # 5. Return Home
         home_pose = np.array([0.3202, 0.001, 0.1565, -0., 0., 0.])
         self.client.set_ee_pose(home_pose, gripper_pos=target_width, preview_time=1.5)
         time.sleep(1.5)
