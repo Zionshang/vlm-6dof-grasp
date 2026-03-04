@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import open3d as o3d
 from pathlib import Path
+from scipy.spatial.transform import Rotation as R
 
 # Setup paths & environment
 ROOT = Path(__file__).resolve().parent
@@ -137,6 +138,51 @@ class GraspPipeline:
         vlm_res = self.vlm.run(img_path, prompt)
         pixel_boxes = vlm_res.get("pixel_boxes", [])
         return pixel_boxes, img_path
+
+    def get_target_position(self, depth, prompt="object", run_id=None, transform_info=None):
+        """
+        Locate target 3D position using VLM detection + Depth.
+        """
+        pixel_boxes, _ = self.detect_objects(prompt, run_id)
+        if not pixel_boxes:
+            print(f"[Pipeline] Object '{prompt}' not detected.")
+            return None
+
+        # 1. Pixel Center & Depth (Robust Median)
+        x1, y1, x2, y2 = pixel_boxes[0]
+        u, v = int((x1 + x2) / 2), int((y1 + y2) / 2)
+        h, w = depth.shape
+        u, v = np.clip(u, 0, w-1), np.clip(v, 0, h-1)
+        
+        patch_size = 5; half = patch_size // 2
+        d_patch = depth[max(0,v-half):min(h,v+half+1), max(0,u-half):min(w,u+half+1)]
+        valid = d_patch[d_patch > 0]
+        
+        if valid.size == 0:
+            print(f"[Pipeline] Invalid depth at center ({u}, {v}).")
+            return None
+        
+        z_c = np.median(valid) / FACTOR_DEPTH # Scale to meters
+        
+        # 2. Project to 3D (Camera Frame)
+        fx, fy = CAMERA_MATRIX[0,0], CAMERA_MATRIX[1,1]
+        cx, cy = CAMERA_MATRIX[0,2], CAMERA_MATRIX[1,2] # 435.756, 435.674 ...
+        
+        x_c = (u - cx) * z_c / fx
+        y_c = (v - cy) * z_c / fy
+        p_cam = np.array([x_c, y_c, z_c])
+        
+        # 3. Coordinate Transformation (Required)
+        curr_pose, R_he, T_he = transform_info
+        
+        T_cam2ee = np.eye(4); T_cam2ee[:3, :3] = R_he; T_cam2ee[:3, 3] = T_he
+        T_ee2base = np.eye(4); T_ee2base[:3, :3] = R.from_euler('xyz', curr_pose[3:], False).as_matrix(); T_ee2base[:3, 3] = curr_pose[:3]
+        
+        # p_base = T_ee2base @ (T_cam2ee @ p_cam)
+        p_base = (T_ee2base @ T_cam2ee @ np.append(p_cam, 1.0))[:3]
+        
+        print(f"[Pipeline] Target '{prompt}' Pos (Base): {p_base}")
+        return p_base
 
     def run(self, color, depth, prompt=None, run_id=None):
         # Use prompt from args if not provided

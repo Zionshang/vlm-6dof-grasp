@@ -161,13 +161,57 @@ class GraspLcmNode:
             self.client.set_ee_pose(current_target, gripper_pos=gripper_pos, preview_time=0.3)
             time.sleep(0.4)
 
-    def execute_grasp(self, prompt):
-        # 0. Move to Ready Pose
-        # ready_pose = np.array([0.25, 0.0, 0.17, 0.0, 1.0, 0.0])
-        ready_pose = np.array([0.476, 0.0, 0.1, 0.0, 0.767, 0.0])
+    def _approach_target(self, prompt="object"):
+        """
+        Move to Ready Pose -> Detect Target -> Move Closer (if valid)
+        """
+        # 1. Move to Ready Pose
+        ready_pose = np.array([0.4, 0.0, 0.2, 0.0, 0.78, 0.0])
         print(f"[Robot] Moving to Ready Pose...")
         self.client.set_ee_pose(ready_pose, 0.086, preview_time=1.5)
-        time.sleep(2)
+        time.sleep(2.0)
+        
+        # 2. Capture & Locate
+        for _ in range(10): c, d = self.cam.get_frames()
+        if c is None: return
+
+        # Need timestamp for run_id consistency
+        ts = time.strftime("%Y%m%d-%H%M%S_approach")
+        self._save_capture(c, d, ts)
+        
+        st = self.client.get_state()
+        if not st: return
+        
+        # Transform Info for pipeline
+        tf = (np.array(st['ee_pose']), HAND_EYE_R, HAND_EYE_T)
+        
+        # Call Pipeline to get Base Position
+        # using 'd' (depth) directly
+        target_pos = self.pipeline.get_target_position(d, prompt, run_id=ts, transform_info=tf)
+
+        if target_pos is None:
+            print("[Approach] Target not found. Staying.")
+            return
+
+        # 3. Check Bounds
+        x, y, z = target_pos
+        # 4. Compute Approach Pose Logic: x-0.17, y, z+0.17 | Rot: 0.0, 0.9, 0.0
+        approach_pose = np.array([x - 0.17, y, z + 0.17, 0.0, 0.9, 0.0])
+        
+        # Check Approach Pose Safety
+        ax, ay, az = approach_pose[:3]
+        if not ((0 <= ax <= 0.73) and (-0.6 <= ay <= 0.6) and (az <= 0.7)):
+             print(f"[Approach] Approach pose unsafe: {approach_pose}. Staying.")
+             return
+
+        # 5. Move Closer
+        print(f"[Approach] Moving to closer view: {approach_pose}")
+        self.client.set_ee_pose(approach_pose, 0.086, preview_time=1)
+        time.sleep(1.2)
+
+    def execute_grasp(self, prompt):
+        # 0. Coarse Approach (Replaces simple Ready Pose)
+        self._approach_target(prompt)
 
         # 1. Capture & Detection (Flush buffer first)
         for _ in range(20): 
