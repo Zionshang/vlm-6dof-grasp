@@ -163,35 +163,42 @@ class GraspLcmNode:
 
     def _approach_target(self, prompt="object"):
         """
-        Move to Ready Pose -> Detect Target -> Move Closer (if valid)
+        Move to Multi-View Ready Pose -> Detect Target -> Move Closer (if valid)
         """
-        # 1. Move to Ready Pose
-        ready_pose = np.array([0.4, 0.0, 0.2, 0.0, 0.78, 0.0])
-        print(f"[Robot] Moving to Ready Pose...")
-        self.client.set_ee_pose(ready_pose, 0.086, preview_time=1.5)
-        time.sleep(2.0)
+        # 1. Multi-View Ready Poses
+        ready_poses = [
+            np.array([0.23, 0.0, 0.28, 0.0, 0.65, 0.0]),
+            np.array([0.256, 0.14, 0.26, 0.07, 0.65, 0.57]),
+            np.array([0.256, -0.14, 0.26, -0.01, 0.65, -0.57])
+        ]
         
-        # 2. Capture & Locate
-        for _ in range(10): c, d = self.cam.get_frames()
-        if c is None: return
-
-        # Need timestamp for run_id consistency
-        ts = time.strftime("%Y%m%d-%H%M%S_approach")
-        self._save_capture(c, d, ts)
+        target_pos = None
+        for i, pose in enumerate(ready_poses):
+            print(f"[Robot] Moving to Ready Pose {i+1}...")
+            self.client.set_ee_pose(pose, 0.086, preview_time=1.5)
+            time.sleep(1.8)
+            
+            # Capture & Locate
+            for _ in range(10): c, d = self.cam.get_frames()
+            if c is None: continue
+            
+            ts = time.strftime(f"%Y%m%d-%H%M%S_ready{i}")
+            self._save_capture(c, d, ts)
+            
+            st = self.client.get_state()
+            if not st: continue
+            tf = (np.array(st['ee_pose']), HAND_EYE_R, HAND_EYE_T)
+            
+            # Try to find target
+            res = self.pipeline.get_target_position(d, prompt, run_id=ts, transform_info=tf)
+            if res is not None:
+                target_pos = res
+                print(f"[Approach] Target found at Pose {i+1}")
+                break
         
-        st = self.client.get_state()
-        if not st: return
-        
-        # Transform Info for pipeline
-        tf = (np.array(st['ee_pose']), HAND_EYE_R, HAND_EYE_T)
-        
-        # Call Pipeline to get Base Position
-        # using 'd' (depth) directly
-        target_pos = self.pipeline.get_target_position(d, prompt, run_id=ts, transform_info=tf)
-
         if target_pos is None:
-            print("[Approach] Target not found. Staying.")
-            return
+            print("[Approach] No target found in any view.")
+            return "detect_none"
 
         # 3. Check Bounds
         x, y, z = target_pos
@@ -211,7 +218,10 @@ class GraspLcmNode:
 
     def execute_grasp(self, prompt):
         # 0. Coarse Approach (Replaces simple Ready Pose)
-        self._approach_target(prompt)
+        approach_res = self._approach_target(prompt)
+        if approach_res == "detect_none":
+            print("[Error] Could not find target in approach phase.")
+            return False, "detect_none"
 
         # 1. Capture & Detection (Flush buffer first)
         for _ in range(20): 
