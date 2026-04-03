@@ -1,0 +1,78 @@
+# 机器人操作指南与启动说明
+
+本指南分为两部分：底层 SDK 驱动启动（在导航主机上）和上层抓取程序启动（在 Jetson 主机上）。
+
+## 一、 系统连接说明
+
+### 1. Jetson 主机 (计算核心)
+- **IP 地址**: `192.168.50.125`
+- **用户名**: `jetson`
+- **连接命令**: `ssh jetson@192.168.50.125`
+
+### 2. Galileo 主机 (导航/底层驱动)
+- **IP 地址**: `192.168.99.106`
+- **用户名**: `galileo`
+- **连接方式**: 需先 SSH 登录 Jetson，再跳转连接 Galileo (或者直接连接如果网络允许)。
+- **连接命令**: `ssh galileo@192.168.99.106`
+
+---
+
+## 二、 启动步骤
+
+### A. 启动底层 SDK (Galileo 主机)
+
+**目标**: 启动机械臂底层通信与控制服务。
+**操作主机**: Galileo (192.168.99.106)
+请开启两个终端窗口连接到 Galileo。
+
+#### [终端 1] 启动 CAN 通信
+```bash
+# 进入 CAN 驱动目录
+cd arx5-lcm-docker/arx_can
+
+# 运行 CAN 配置脚本 (可能需要 sudo 权限)
+./can.sh
+```
+
+#### [终端 2] 启动 LCM Server
+```bash
+# 1. 启动docker环境
+./run_arx_replay.sh
+
+# 2. 进入 LCM 通信目录 
+cd python/communication/lcm/
+
+# 3. 启动 LCM 服务器
+# 参数说明: 
+#   X5_umi: 机械臂型号
+#   can0: CAN 接口名称
+python lcm_server.py X5_umi can0
+```
+
+---
+
+### B. 启动抓取程序 (Jetson 主机)
+
+**目标**: 启动上层 VLM 抓取逻辑与 LCM 节点。
+**操作主机**: Jetson (192.168.50.125)
+请开启两个终端窗口连接到 Jetson，并确保位于项目目录。
+
+**工作目录准备**
+```bash
+# 确保在项目根目录
+cd ~/python_ws/vlm-6dof-grasp/
+```
+
+#### [终端 3] 启动 LCM 节点 (抓取核心)
+```bash
+# 启动 LCM 节点脚本
+# 注意: 此脚本会自动配置路由 (sudo route add) 和 PYTHONPATH
+./run_lcm_node.sh
+```
+
+#### [终端 4] 测试 LCM 控制器
+```bash
+# 运行测试脚本，用于发送指令或调试
+# 此脚本主要用于测试 LCM 通信是否正常
+python test_lcm_controller.py
+```
