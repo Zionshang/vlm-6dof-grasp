@@ -92,3 +92,4 @@ lcm_Transport/
 Paper
 vlm/prompts/new_grasp_selection.yaml
 run_grasp_camera.py
+experiment_result
