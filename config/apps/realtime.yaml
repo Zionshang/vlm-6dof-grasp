@@ -1,0 +1,26 @@
+# run_realtime 组件组合:D405 → 硬件深度 → VLM 检测 → FastSAM 分割 → EconomicGrasp → VLM 选择 → 机械臂执行
+# 机械臂路径(需 HardwareConfig + arx5 LCM)。换组件只改这里。
+components:
+  camera:
+    backend: d405
+  depth:
+    backend: raw            # 硬件 depth(mm)→ 米
+  detector:
+    backend: vlm
+    model: qwen3-vl:8b-instruct-q4_K_M
+  segmenter:
+    backend: fastsam
+    weights: fastsam/weight/FastSAM-s.pt
+    use_sam: true
+  grasp_engine:
+    backend: economic
+    checkpoint: economic_grasp/checkpoint/economicgrasp_epoch10.tar
+    use_collision: true
+  selector:
+    backend: vlm
+    model: qwen3-vl:8b-instruct-q4_K_M
+  executor:
+    backend: grasp
+  robot:
+    backend: arx5_lcm
+  # run_realtime 用 cv2 预览(Handler 内),不配 visualizer 组件

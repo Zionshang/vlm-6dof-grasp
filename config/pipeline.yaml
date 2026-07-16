@@ -1,0 +1,11 @@
+# =============================================================================
+# 管线级配置:感知后端选择等(与 vlm 模型配置、硬件 profile 分离)
+# -----------------------------------------------------------------------------
+# 换检测/分割算法改这里,core/pipeline.py 无需改动。
+# =============================================================================
+
+# 可插拔感知后端(见 perception/ registry)
+# detector:  选检测器   vlm | yolo    (新后端在 perception/detectors.py 用 @register_detector 注册)
+# segmenter: 选分割器   fastsam       (新后端在 perception/segmenters.py 用 @register_segmenter 注册)
+detector: vlm
+segmenter: fastsam

@@ -8,8 +8,9 @@ os.environ.pop("https_proxy", None)
 os.environ.pop("ALL_PROXY", None)
 os.environ.pop("all_proxy", None)
 
-ROOT = Path(__file__).resolve().parent
-sys.path.extend([str(ROOT), str(ROOT / "vlm")])
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import paths
+ROOT = paths.PROJECT_ROOT
 
 from vlm.src.apps.grasp_selection import GraspSelectionApp
 from vlm.src.core.config import load_config

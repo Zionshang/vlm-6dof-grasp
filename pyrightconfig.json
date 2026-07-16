@@ -1,0 +1,10 @@
+{
+    // 镜像 paths.py 的 _PATH_ENTRIES:告诉静态分析器这些目录是模块搜索路径
+    // (运行时由 paths.py 注册到 sys.path,IDE 静态分析不执行它,故需在此声明)
+    // 项目根默认已包含,无需列 "core" 之外的顶层目录
+    "extraPaths": [
+        "core",
+        "vlm",
+        "economic_grasp"
+    ]
+}

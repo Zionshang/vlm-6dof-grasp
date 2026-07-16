@@ -74,5 +74,5 @@ cd ~/python_ws/vlm-6dof-grasp/
 ```bash
 # 运行测试脚本，用于发送指令或调试
 # 此脚本主要用于测试 LCM 通信是否正常
-python test_lcm_controller.py
+python tests/test_lcm_controller.py
 ```

@@ -1,15 +1,22 @@
 import lcm
 import json
 import time
+import sys
+from pathlib import Path
 
-# Channels
-MANI_CMD_CHANNEL = "mani/cmd"
-MANI_CALLBACK_CHANNEL = "mani/callback"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import paths
+from hardware import HardwareConfig
+
+# Channels(来自硬件 profile)
+hw = HardwareConfig()
+MANI_CMD_CHANNEL = hw.lcm_cmd_channel
+MANI_CALLBACK_CHANNEL = hw.lcm_callback_channel
 
 class SimpleLcmTester:
     def __init__(self):
         # Use same LCM URL as the node
-        self.lc = lcm.LCM("udpm://239.255.76.67:50000?ttl=1")
+        self.lc = lcm.LCM(hw.lcm_task_url)
         self.lc.subscribe(MANI_CALLBACK_CHANNEL, self.on_callback)
         print(f"[Tester] Subscribed to {MANI_CALLBACK_CHANNEL}")
         

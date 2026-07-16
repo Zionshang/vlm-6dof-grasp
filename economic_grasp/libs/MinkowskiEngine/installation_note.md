@@ -86,6 +86,42 @@ if it shows MinkowskiEngine not installed, check error message by running
 python -c "import MinkowskiEngine"
 ```
 
+### For Cuda toolkit 12.8
+
+There are massive issues with compiling on cuda 12.8 (for new rtx 4000 cars)
+
+this is on how to solve it
+
+some doccumentation:
+
+
+
+https://github.com/NVIDIA/MinkowskiEngine/issues?q=is%3Aissue%20state%3Aopen%20cuda-12%20.8
+
+https://github.com/NVIDIA/MinkowskiEngine/issues/621
+
+https://github.com/CiSong10/MinkowskiEngine/blob/cuda12-installation/installation_note.md  (current repo forked from)
+
+
+THIS IS THE GOAT Answer:
+we need to update like this the gcc and g++ bindings otherwise it keeps taking g++13 which ships with cuda toolkit 12.8
+
+https://github.com/NVlabs/instant-ngp/issues/119#issuecomment-1034701258
+
+```
+$ sudo apt install gcc-12 g++-12
+$ export CC=/usr/bin/gcc-12
+$ export CXX=/usr/bin/g++-12
+$ export CUDA_ROOT=/usr/local/cuda-12.8
+$ ln -s /usr/bin/gcc-12 $CUDA_ROOT/bin/gcc
+$ ln -s /usr/bin/g++-12 $CUDA_ROOT/bin/g++
+(Build Instant-NGP as described)
+```
+
+so follow here but replace with v12
+and then run the build process as in [installation notes](./installation_note.md)
+
+
 ## Troubleshooting
 
 If encounter issues, clean up any old builds before rebuillding

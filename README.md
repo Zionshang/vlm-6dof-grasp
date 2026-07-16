@@ -79,10 +79,10 @@ pip install -r vlm/requirements.txt
 
 ## 运行 Pipeline
 
-入口脚本：`main_pipeline.py`
+入口脚本：`apps/main_pipeline.py`
 
 ```bash
-python main_pipeline.py \
+python apps/main_pipeline.py \
   --data_dir example_data \
   --prompt "方盒子"
 ```

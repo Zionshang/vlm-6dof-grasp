@@ -17,7 +17,15 @@
 #ifndef CONCURRENT_UNORDERED_MAP_CUH
 #define CONCURRENT_UNORDERED_MAP_CUH
 
+#ifndef NVTX_DISABLE
 #include <cudf/detail/nvtx/ranges.hpp>
+#endif
+
+#ifdef NVTX_DISABLE
+#ifndef CUDF_FUNC_RANGE
+#define CUDF_FUNC_RANGE()
+#endif
+#endif
 #include <hash/hash_allocator.cuh>
 #include <hash/helper_functions.cuh>
 #include <hash/managed.cuh>

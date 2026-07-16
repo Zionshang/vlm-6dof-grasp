@@ -1,4 +1,4 @@
-export CXX=g++-7;
+export CXX=g++-12;
 
 rm -rf build; python setup.py install --test=coordinate
 python -m unittest coordinate_test

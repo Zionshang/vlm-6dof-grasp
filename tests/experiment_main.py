@@ -8,10 +8,12 @@ import numpy as np
 import open3d as o3d
 import pyrealsense2 as rs
 
-ROOT = Path(__file__).resolve().parent
-sys.path.extend([str(ROOT)])
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import paths
+ROOT = paths.PROJECT_ROOT
 
-from inference_pipeline import GraspPipeline
+from pipeline import GraspPipeline
+from saver import save_image
 
 
 class RealSenseBase:
@@ -60,8 +62,7 @@ def ts():
 
 
 def save_rgb(path, color):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(path), cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
+    save_image(path, color, is_rgb=True)
 
 def save_depth(path_raw, path_vis, depth):
     path_raw.parent.mkdir(parents=True, exist_ok=True)
@@ -96,11 +97,12 @@ def pca_long_axis(mask):
 def detect_segment(pipeline, color, prompt, out_dir):
     img_path = out_dir / "rgb.png"
     save_rgb(img_path, color)
-    boxes = pipeline.vlm.run(str(img_path), prompt).get("pixel_boxes", [])
+    detection = pipeline.detector.detect(color, prompt)
+    boxes = detection.boxes if detection else []
     if not boxes:
         return None, None
     boxes = pipeline.expand_boxes(boxes, color.shape)
-    mask = pipeline._run_segmentation(str(img_path), boxes, color.shape)
+    mask = pipeline.segmenter.segment(color, boxes)
     return boxes, mask
 
 

@@ -7,7 +7,7 @@ Q ?= @
 # Uncomment for CPU only build. From the command line, `python setup.py install --cpu_only`
 # CPU_ONLY := 1
 
-CXX ?= g++
+CXX ?= g++-12
 PYTHON ?= python
 
 EXTENSION_NAME := minkowski

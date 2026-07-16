@@ -1,0 +1,48 @@
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+
+ENV TZ=US/Pacific
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN apt-get update --fix-missing && \
+    apt-get install -y apt-utils build-essential ca-certificates cmake curl ffmpeg git libturbojpeg-dev pkg-config wget libnvinfer10 libnvinfer-dev libnvinfer-plugin10 libnvinfer-plugin-dev libnvonnxparsers10 libnvonnxparsers-dev libnvinfer-dispatch10 libnvinfer-bin zstd libyaml-cpp-dev libopencv-dev libx11-xcb1 libxcb-xinerama0 libxcb-icccm4 libxcb-render-util0 libxcb-shape0 libxcb-keysyms1 libxcb-image0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-xkb1 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-randr0 libxcb-xtest0 libsm6 libxext6 libxkbcommon0 && \
+    rm -rf /var/lib/apt/lists/*
+
+SHELL ["/bin/bash", "--login", "-c"]
+
+RUN cd / && wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /miniconda.sh && \
+    /bin/bash /miniconda.sh -b -p /opt/conda &&\
+    ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh &&\
+    echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc &&\
+    /bin/bash -c "source ~/.bashrc" && \
+    /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main &&\
+    /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r &&\
+    /opt/conda/bin/conda update -n base -c defaults conda -y &&\
+    /opt/conda/bin/conda create -n my python=3.12
+
+ENV PATH=$PATH:/opt/conda/envs/my/bin
+ENV OPENCV_IO_ENABLE_OPENEXR=1
+
+RUN conda init bash &&\
+    echo "conda activate my" >> ~/.bashrc &&\
+    conda activate my &&\
+    pip install uv &&\
+    uv pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
+
+COPY requirements.txt /tmp/requirements.txt
+# Do not install nvidia-modelopt[torch] here. It has a strong transitive torch
+# requirement and can silently replace the pinned torch/torchvision pair above,
+# causing torchvision ABI mismatches such as:
+#   RuntimeError: operator torchvision::nms does not exist
+# Install modelopt manually only if you need quantization tooling.
+RUN conda activate my &&\
+    uv pip install -r /tmp/requirements.txt &&\
+    uv pip install onnxruntime-gpu onnx onnxscript pycuda cuda-python tensorrt-cu12 tensorrt-lean-cu12 tensorrt-dispatch-cu12 && nvidia-modelopt[torch] &&\
+    conda install -y -c anaconda h5py &&\
+    conda install -y -c conda-forge libstdcxx-ng
+
+RUN cd / && wget https://developer.download.nvidia.com/compute/tensorrt/10.11.0/local_installers/nv-tensorrt-local-repo-ubuntu2204-10.11.0-cuda-12.9_1.0-1_amd64.deb &&\
+    apt install -y ./nv-tensorrt-local-repo-ubuntu2204-10.11.0-cuda-12.9_1.0-1_amd64.deb &&\
+    echo 'alias trtexec="/usr/src/tensorrt/bin/trtexec"' >> ~/.bashrc &&\
+    rm -f /nv-tensorrt-local-repo-ubuntu2204-10.11.0-cuda-12.9_1.0-1_amd64.deb
+
+SHELL ["/bin/bash", "-c", "source ~/.bashrc && conda activate my"]
