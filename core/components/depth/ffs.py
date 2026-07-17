@@ -89,8 +89,24 @@ def build_ffs_depth(ctx=None, cfg=None, hw=None, manager=None, **kw):
     torch.cuda.synchronize()
     print("[FFS] warmup done")
 
+    cam = manager.get("camera")   # 持相机(FFS+align 需 IR/color 内参、IR→color 外参、baseline)
+
     class FFSDepth:
         factor_depth = 1.0   # 输出已是米
+
+        def __init__(self, cam):
+            self.cam = cam
+
+        def step(self, ctx):
+            """读 ctx.ir(left/right IR)→ FFS → align → 写 ctx.depth(米,color 视角)。
+
+            对齐:ffs_depth 输出对齐 left IR(stream1);align_ir_to_color 用 stream1 IR 内参
+            deproject + stream1→color 外参 transform + color 内参 project,left IR→color 准确。
+            """
+            if ctx.ir is None:
+                return
+            ir1, ir2 = ctx.ir
+            ctx.depth = self.ffs_depth(ir1, ir2, self.cam)
 
         def ffs_depth(self, ir1, ir2, cam):
             img0 = np.stack([ir1, ir1, ir1], -1)
@@ -109,4 +125,4 @@ def build_ffs_depth(ctx=None, cfg=None, hw=None, manager=None, **kw):
             depth_ir = cv2.resize(depth_ir, (cam.width, cam.height), interpolation=cv2.INTER_NEAREST)
             return align_ir_to_color(depth_ir, cam)
 
-    return FFSDepth()
+    return FFSDepth(cam)

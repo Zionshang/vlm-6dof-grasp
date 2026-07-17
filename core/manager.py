@@ -17,13 +17,25 @@ class GraspManager:
         self._build_components(app_config)
 
     def _build_components(self, cfg: dict):
-        """按 config['components'] 的 backend 名 build + 注册组件。"""
-        import components   # 触发各组件 @register(把 factory 登记进 registry)
+        """按 config['components'] 的 backend 名 build 组件。
+
+        按需 import:只 import config 声明的 role 对应子模块(触发其 @register),
+        不用的角色(detectors/segmenters 等重依赖)不加载。
+        """
+        import importlib
+        _ROLE_MODULE = {
+            "camera": "cameras", "depth": "depth", "detector": "detectors",
+            "segmenter": "segmenters", "grasp_engine": "grasp_engines",
+            "selector": "selectors", "executor": "executors",
+            "visualizer": "visualizers", "robot": "robots",
+        }
         for role, spec in (cfg.get("components") or {}).items():
             spec = spec or {}
             name = spec.get("backend")
             if not name:
                 continue
+            mod = _ROLE_MODULE.get(role, role + "s")
+            importlib.import_module(f"components.{mod}")   # 按需触发该角色 @register
             self.components[role] = build(role, name, ctx=self.ctx, cfg=spec,
                                           hw=self.hw, manager=self)
 

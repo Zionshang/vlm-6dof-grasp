@@ -54,7 +54,11 @@ class RealSenseD435i:
         self.config = rs.config()
         self.config.enable_stream(rs.stream.color, width, height, rs.format.rgb8, fps)
         self.config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
-        self.pipeline.start(self.config)
+        profile = self.pipeline.start(self.config)
+        intr = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+        self.color_fx, self.color_fy = intr.fx, intr.fy
+        self.color_cx, self.color_cy = intr.ppx, intr.ppy
+        self.width, self.height = width, height
         self.align = rs.align(rs.stream.color)
         print("Camera (D435i) started.")
 

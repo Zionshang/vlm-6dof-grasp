@@ -1,9 +1,6 @@
-"""可插拔组件包。import 本包触发各子模块的 @register(注册生效)。
+"""可插拔组件包(按需 import)。
 
-阶段 1:骨架占位。阶段 2 起陆续填入子模块,并在下方 import 使注册生效:
-    from . import (cameras, depth, detectors, segmenters,
-                   grasp_engines, selectors, executors, visualizers, robots)
+GraspManager._build_components 根据 config 的 role 动态 import 对应子模块
+(如 `components.cameras`)触发其 @register;不用的角色(detectors/segmenters 等
+重依赖)不会被加载。新增角色子模块只需建目录 + @register,无需改本文件。
 """
-# 阶段 2 填:每加一个子模块在此 import,确保 @register 在 Manager 构建前执行。
-from . import (cameras, robots, executors, grasp_engines,   # noqa: F401
-               detectors, selectors, depth, segmenters, visualizers)

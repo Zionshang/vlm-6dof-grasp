@@ -10,6 +10,9 @@ def build_d435i_camera(ctx=None, cfg=None, hw=None, manager=None, **kw):
                          fps=cfg.get("fps", 30))
 
     class D435iCamera:
+        color_fx, color_fy = cam.color_fx, cam.color_fy
+        color_cx, color_cy = cam.color_cx, cam.color_cy
+        width, height = cam.width, cam.height
         def step(self, ctx):
             color, depth = cam.get_frames()
             if color is not None:
