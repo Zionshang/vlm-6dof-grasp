@@ -5,14 +5,13 @@ components:
     width: 640
     height: 480
     fps: 30
+    discard_frames: 5
   depth:
     backend: ffs
     model: Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth
     scale: 0.5
     valid_iters: 4
     max_disp: 192
-    width: 640
-    height: 480
   grasp_engine:
     backend: economic
     checkpoint: economic_grasp/checkpoint/economicgrasp_epoch10.tar

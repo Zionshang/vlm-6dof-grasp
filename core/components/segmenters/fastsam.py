@@ -3,7 +3,7 @@ from registry import register
 
 
 @register("segmenter", "fastsam")
-def build_fastsam_segmenter(ctx=None, cfg=None, hw=None, manager=None, **kw):
+def build_fastsam_segmenter(cfg=None, hw=None, ctx=None, dependencies=None):
     from perception.segmenters import FastSAMSegmenter
     import paths
     ROOT = paths.PROJECT_ROOT

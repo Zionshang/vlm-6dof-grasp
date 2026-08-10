@@ -16,7 +16,7 @@ ROOT = paths.PROJECT_ROOT
 [os.environ.pop(k, None) for k in list(os.environ) if "PROXY" in k.upper()]
 
 from manager import GraspManager
-from handlers.realtime_vis import RealtimeVisHandler
+from apps.handlers.realtime_vis import RealtimeVisHandler
 
 
 def main():
@@ -28,10 +28,18 @@ def main():
     cfg_name = "main_pipeline_ffs.yaml" if args.use_ffs else "main_pipeline_raw.yaml"
     cfg = yaml.safe_load(open(ROOT / "config/apps" / cfg_name))
     m = GraspManager(cfg)   # 按 config build camera/depth/grasp_engine/visualizer
-    handler = RealtimeVisHandler(
-        m.get("depth"), m.get("grasp_engine"), m.get("camera"), m.get("visualizer"), m.ctx)
-    m.handshake()           # 等相机首帧(主线程 cam.step)
-    m.run(handler)          # 主循环:handler.step(cam.step 主线程取帧 + worker depth+grasp + o3d)
+    if not m.handshake():
+        m.release_resources()
+        raise SystemExit("[Error] Camera handshake failed")
+    try:
+        handler = RealtimeVisHandler(
+            m.require("depth"), m.require("grasp_engine"),
+            m.require("camera"), m.require("visualizer"),
+        )
+        m.run(handler)
+    except BaseException:
+        m.release_resources()
+        raise
 
 
 if __name__ == "__main__":

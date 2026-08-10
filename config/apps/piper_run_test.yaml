@@ -1,0 +1,51 @@
+# Piper test: far locate -> close observe -> select -> execute -> visualize.
+components:
+  robot:
+    backend: piper_lcm
+  camera:
+    backend: d405_stereo
+    width: 848
+    height: 480
+    fps: 30
+    discard_frames: 5
+  depth:
+    backend: ffs
+    model: Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth
+    scale: 0.5
+    valid_iters: 4
+    max_disp: 192
+  detector:
+    backend: vlm
+    model: qwen3-vl:8b-instruct-q4_K_M
+    host: http://127.0.0.1:11434
+    num_ctx: 4096
+    keep_alive: 0
+  segmenter:
+    backend: fastsam
+    weights: fastsam/weight/FastSAM-s.pt
+    use_sam: true
+  grasp_engine:
+    backend: economic
+    checkpoint: economic_grasp/checkpoint/economicgrasp_epoch10.tar
+    use_collision: true
+  selector:
+    backend: first
+  executor:
+    backend: grasp
+    require_home: true
+    steps:
+      - {name: approach, gripper: max, offset: [-0.06, 0.0, 0.05]}
+      - {name: reach, gripper: max}
+      - {name: grasp, gripper: target, wait: 2.0}
+      - {name: lift, gripper: target, offset: [0.0, 0.0, 0.08]}
+      - {name: home, gripper: target, use_home_pose: true}
+  visualizer:
+    backend: o3d
+    lazy: true
+    title: "Piper D405 FFS Grasp Test"
+
+pipeline:
+  predict_topk: 100
+  selector_topk: 8
+  filter_orientation: true
+  save_debug: true

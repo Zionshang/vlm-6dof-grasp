@@ -1,10 +1,10 @@
-"""VLM 抓取选择器组件(复用 grasping.selector.VLMSelector)。"""
+"""VLM grasp-selector plugin."""
 from registry import register
 
 
 @register("selector", "vlm")
-def build_vlm_selector(ctx=None, cfg=None, hw=None, manager=None, **kw):
-    from grasping.selector import VLMSelector
+def build_vlm_selector(cfg=None, hw=None, ctx=None, dependencies=None):
+    from grasp_selector import VLMSelector
     import paths
     ROOT = paths.PROJECT_ROOT
     scfg = cfg or {}

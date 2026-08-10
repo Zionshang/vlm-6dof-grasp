@@ -22,56 +22,10 @@ class Detection:
 
 
 class Detector(Protocol):
-    """检测器接口:图像 + 文本提示 -> 检测结果。VLM / YOLO / GroundingDINO 等可实现。
-
-    生命周期方法(unload/warmup)用于后端资源管理(如 VLM 与 PyTorch 抢 VRAM);
-    不需要这种管理的后端(如 YOLO)可空实现。
-    """
+    """检测器接口:图像 + 文本提示 -> 检测结果。"""
     def detect(self, color: np.ndarray, prompt: str) -> Optional[Detection]: ...
-    def unload(self) -> None: ...
-    def warmup(self) -> None: ...
 
 
 class Segmenter(Protocol):
     """分割器接口:图像 + 框 -> mask。FastSAM / SAM2 / bbox 等可实现。"""
     def segment(self, color: np.ndarray, boxes: List[List[int]]) -> Optional[np.ndarray]: ...
-
-
-# =============================================================================
-# Registry:配置驱动的可插拔(换后端不改 pipeline)
-# =============================================================================
-# backend 名 -> 工厂函数 factory(cfg, root, args=None) -> 实现
-# 实现者用 @register_detector / @register_segmenter 注册自己的工厂;
-# pipeline 只调 build_detector / build_segmenter,不 import 任何具体类。
-_DETECTOR_REGISTRY = {}
-_SEGMENTER_REGISTRY = {}
-
-
-def register_detector(name):
-    """装饰一个检测器工厂 factory(cfg, root, args=None) -> Detector,注册为 backend=name。"""
-    def deco(factory):
-        _DETECTOR_REGISTRY[name] = factory
-        return factory
-    return deco
-
-
-def register_segmenter(name):
-    """装饰一个分割器工厂 factory(cfg, root, args=None) -> Segmenter,注册为 backend=name。"""
-    def deco(factory):
-        _SEGMENTER_REGISTRY[name] = factory
-        return factory
-    return deco
-
-
-def build_detector(backend, cfg, root, args=None):
-    """按 backend 名从 registry 取检测器工厂并构建。换检测算法只需注册新工厂 + 改配置。"""
-    if backend not in _DETECTOR_REGISTRY:
-        raise ValueError(f"Unknown detector backend '{backend}'. Registered: {list(_DETECTOR_REGISTRY)}")
-    return _DETECTOR_REGISTRY[backend](cfg=cfg, root=root, args=args)
-
-
-def build_segmenter(backend, cfg, root, args=None):
-    """按 backend 名从 registry 取分割器工厂并构建。换分割算法只需注册新工厂 + 改配置。"""
-    if backend not in _SEGMENTER_REGISTRY:
-        raise ValueError(f"Unknown segmenter backend '{backend}'. Registered: {list(_SEGMENTER_REGISTRY)}")
-    return _SEGMENTER_REGISTRY[backend](cfg=cfg, root=root, args=args)

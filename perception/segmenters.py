@@ -2,7 +2,6 @@
 from typing import Optional
 import numpy as np
 
-from .base import register_segmenter
 
 
 class FastSAMSegmenter:
@@ -27,16 +26,11 @@ class FastSAMSegmenter:
             mask_data = res.masks.data
             if torch.is_tensor(mask_data):
                 mask_data = mask_data.cpu().numpy()
-            return np.any(mask_data > 0, axis=0)
+            mask = np.any(mask_data > 0, axis=0)
+            if mask.shape != color.shape[:2]:
+                raise ValueError(
+                    "FastSAM mask is not in the RGB image grid: "
+                    f"mask={mask.shape}, rgb={color.shape[:2]}"
+                )
+            return mask
         return None
-
-
-# =============================================================================
-# Registry 工厂:每个 backend 一个 @register_segmenter
-# 加新分割器 = 新增一个工厂,pipeline 无需改动。
-# =============================================================================
-
-@register_segmenter("fastsam")
-def build_fastsam_segmenter(cfg, root, args=None):
-    """默认分割器:FastSAM(use_sam=False 时退化到 bbox mask)。"""
-    return FastSAMSegmenter(str(root / args.fastsam), use_sam=args.use_sam)

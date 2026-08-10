@@ -91,6 +91,11 @@ def _ir_to_uint8(img):
     return img.astype(np.uint8)
 
 
+def _realsense_rotation_matrix(extrinsics):
+    """Convert librealsense's column-major flat rotation to a NumPy matrix."""
+    return np.asarray(extrinsics.rotation, dtype=np.float64).reshape(3, 3).T
+
+
 class RealSenseD435iStereo:
     """RealSense D435i 立体驱动:开 color + 左右 IR + depth 四流,供 Fast-FoundationStereo。
 
@@ -99,7 +104,7 @@ class RealSenseD435iStereo:
     (FFS 需要 raw 立体对)。参考 Fast-FoundationStereo/scripts/run_realsense_demo.py。
     """
 
-    def __init__(self, width=640, height=480, fps=30):
+    def __init__(self, width=640, height=480, fps=30, device_name="D435i"):
         import pyrealsense2 as rs
         self.pipeline = rs.pipeline()
         self.config = rs.config()
@@ -118,14 +123,14 @@ class RealSenseD435iStereo:
         self.ir_cx, self.ir_cy = ir_intr.ppx, ir_intr.ppy
 
         extr = profile.get_stream(rs.stream.infrared, 1).get_extrinsics_to(profile.get_stream(rs.stream.color))
-        self.ir_to_color_R = np.array(extr.rotation, dtype=np.float64).reshape(3, 3)
+        self.ir_to_color_R = _realsense_rotation_matrix(extr)
         self.ir_to_color_T = np.array(extr.translation, dtype=np.float64)
 
         dev = profile.get_device()
         depth_sensor = next((s for s in dev.query_sensors() if s.is_depth_sensor()), None)
         raw = depth_sensor.get_option(rs.option.stereo_baseline) if depth_sensor else 0.0
         self.baseline = raw / 1000.0 if raw > 0.5 else raw  # mm→m 或已是 m
-        print(f"Camera (D435i stereo) started | color_fx={self.color_fx:.2f} "
+        print(f"Camera ({device_name} stereo) started | color_fx={self.color_fx:.2f} "
               f"ir_fx={self.ir_fx:.2f} baseline={self.baseline:.4f}m")
 
     def get_stereo_frames(self):
@@ -141,3 +146,10 @@ class RealSenseD435iStereo:
 
     def release(self):
         self.pipeline.stop()
+
+
+class RealSenseD405Stereo(RealSenseD435iStereo):
+    """D405 color + stereo IR streams for FFS depth reconstruction."""
+
+    def __init__(self, width=848, height=480, fps=30):
+        super().__init__(width=width, height=height, fps=fps, device_name="D405")

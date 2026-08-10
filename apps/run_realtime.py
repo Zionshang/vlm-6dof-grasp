@@ -15,19 +15,23 @@ ROOT = paths.PROJECT_ROOT
 
 from manager import GraspManager
 from hardware import HardwareConfig
-from handlers.keyboard_grasp import KeyboardGraspHandler
+from apps.handlers.keyboard_grasp import KeyboardGraspHandler
 
 
 def main():
     cfg = yaml.safe_load(open(ROOT / "config/apps/realtime.yaml"))
     hw = HardwareConfig()
     m = GraspManager(cfg, hw=hw)
-    handler = KeyboardGraspHandler(
-        m.get("camera"), m.get("detector"), m.get("segmenter"), m.get("grasp_engine"),
-        m.get("selector"), m.get("executor"), m.get("robot"), hw, prompt="mug")
-    m.handshake([("Robot connection", lambda: m.get("robot") is not None)])
-    handler.on_start()
-    m.run(handler)
+    if not m.handshake([("Robot connection", lambda: m.get("robot") is not None)]):
+        m.release_resources()
+        raise SystemExit("[Error] Component handshake failed")
+    try:
+        handler = KeyboardGraspHandler(m, hw, prompt="mug", output_dir=ROOT / "output")
+        handler.on_start()
+        m.run(handler)
+    except BaseException:
+        m.release_resources()
+        raise
 
 
 if __name__ == "__main__":

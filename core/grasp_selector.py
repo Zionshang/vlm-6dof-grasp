@@ -23,35 +23,13 @@ def _compress_image(image, max_dim=480):
     return cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
 def project_grasp_to_2d(trans, rot, width, intrinsic, depth=0.04):
-    """
-    将 3D 抓取投影到 2D 图像平面。
-    这里进行了【坐标对齐修正】，使得可视化位置与机器人实际执行位置一致。
-    机器人执行时会沿着抓取方向前移 4cm (T_align)。
-    因此可视化也需要前移，才能正确显示抓取落点。
-    """
-
-    # 1. 构建原始抓取矩阵 T_grasp2cam
-    T_grasp2cam = np.eye(4)
-    T_grasp2cam[:3, :3] = rot
-    T_grasp2cam[:3, 3] = trans
-
-    # 2. 定义前移修正矩阵 T_align
-    T_align = np.eye(4)
-    T_align[:3, 3] = [0.04, 0, 0]
-
-    # 3. 计算修正后的抓取位姿
-    T_final = T_grasp2cam @ T_align
-
-    # 4. 提取新的旋转和平移
-    rot_final = T_final[:3, :3]
-    trans_final = T_final[:3, 3]
+    """将 EconomicGrasp 的原始抓取位姿投影到 2D 图像。"""
 
     hw = width / 2
     d = depth
 
     # 定义关键点 (在抓取局部坐标系下)
-    # Origin (X=0) 现在是【修正后】的指尖位置
-    # Tip 在 0, Base 在 -d
+    # 用同一抓取原点绘制 2D 指尖(X=0)和指根(X=-d)。
     points_g = np.array([
         [0,   -hw, 0],  # 0: 左指尖 (Tip)
         [-d,  -hw, 0],  # 1: 左指根 (Base)
@@ -59,8 +37,7 @@ def project_grasp_to_2d(trans, rot, width, intrinsic, depth=0.04):
         [0,    hw, 0],  # 3: 右指尖 (Tip)
     ]).T # (3, 4)
 
-    # 变换到相机坐标系 (使用修正后的 rot_final 和 trans_final)
-    points_c = rot_final @ points_g + trans_final.reshape(3, 1) # (3, 4)
+    points_c = rot @ points_g + np.asarray(trans).reshape(3, 1) # (3, 4)
 
     # 投影到像素坐标
     fx, fy = intrinsic[0, 0], intrinsic[1, 1]
@@ -145,9 +122,6 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
 
         pts = project_grasp_to_2d(t, r, w, intrinsic)
 
-        if i == 0:
-            best_candidate_backup = (vis_img.copy(), pts, t, r, w)
-
         if t[2] <= 0: continue
 
         # 1. 夹爪2D宽度
@@ -182,8 +156,11 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
         cv2.circle(vis_img, tuple(pts[2]), 8, (0, 0, 255), -1)
         cv2.arrowedLine(vis_img, tuple(center_base), tuple(center_tip), (0, 0, 255), 3, tipLength=0.35)
 
+        if best_candidate_backup is None:
+            best_candidate_backup = (vis_img.copy(), pts, t, r, w, i)
+
         # --- 统一筛选 ---
-        cond_width = width_px < 75
+        cond_width = width_px < 55
         cond_pose = pts[2][0] < pts[1][0] and pts[2][1] > pts[1][1]
         cond_angle = angle_deg < 45
         cond_down = center_tip[1] > center_base[1]
@@ -212,6 +189,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
         vis_images.append(_compress_image(vis_img))
         candidates.append({
             "id": valid_idx,
+            "source_index": i,
             "pose_matrix": pose_mat.tolist(),
             "width": float(w),
             "translation": t.tolist(),
@@ -222,7 +200,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
     # [Added] 兜底逻辑：如果没有任何候选通过筛选，强制保留第一个
     if not candidates and best_candidate_backup is not None:
         print("[Warn] All candidates rejected. Force keeping the ID:0 candidate.")
-        vis_img, pts, t, r, w = best_candidate_backup
+        vis_img, pts, t, r, w, source_index = best_candidate_backup
 
         # 重新绘制 Label (Hardcoded ID: 0)
         _draw_id_label(vis_img, pts, 0)
@@ -234,6 +212,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
         vis_images.append(_compress_image(vis_img))
         candidates.append({
             "id": 0,
+            "source_index": source_index,
             "pose_matrix": pose_mat.tolist(),
             "width": float(w),
             "translation": t.tolist(),
@@ -290,8 +269,12 @@ class FirstGraspSelector:
 
     def select(self, color, trans_list, rot_list, width_list, intrinsic,
                top_k=8, output_dir="output"):
-        _, candidates = vlm_grasp_visualize_batch(
+        imgs, candidates = vlm_grasp_visualize_batch(
             color, trans_list, rot_list, width_list, intrinsic, top_k=top_k, output_dir=output_dir
         )
+        save_2d_grasp(output_dir, imgs)
+        paths = save_2d_grasp(output_dir, imgs[:1], subdir="first_select")
+        if paths:
+            print(f"[Select] Saved first filtered grasp: {paths[0]}")
         print("[Select] No VLM; using first candidate (ID: 0).")
         return 0, candidates

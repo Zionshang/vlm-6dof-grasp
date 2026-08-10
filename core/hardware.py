@@ -29,11 +29,13 @@ class HardwareConfig:
 
         self.name = c.get("name")
 
-        # ---- robot(驱动类型,由 core/robot_client.make_robot_client 分发)----
+        # ---- robot backend selected by the component registry ----
         self.robot_kind = c.get("robot", {}).get("kind", "arx5_lcm")
+        self.robot_driver_root = c.get("robot", {}).get("driver_root")
 
         # ---- camera ----
         cam = c["camera"]
+        self.camera_kind = cam.get("kind", "d405")
         self.camera_matrix = np.array(cam["intrinsic"], dtype=float)
         self.dist_coeffs = np.array(cam["dist_coeffs"], dtype=float)
         self.factor_depth = cam["factor_depth"]
@@ -51,26 +53,54 @@ class HardwareConfig:
         wb = c["workspace_bounds"]
         self.ws_x = tuple(wb["x"])
         self.ws_y = tuple(wb["y"])
-        self.ws_z_max = wb["z_max"]
+        self.ws_z_max = wb.get("z_max")
 
         # ---- poses ----
         ps = c["poses"]
-        self.home_pose = np.array(ps["home"], dtype=float)
-        self.drop_pose = np.array(ps["drop"], dtype=float)
-        self.ready_views = [np.array(p, dtype=float) for p in ps["ready_views"]]
-        self.realtime_ready_action = np.array(ps["realtime_ready_action"], dtype=float)
-        self.realtime_ready_main = np.array(ps["realtime_ready_main"], dtype=float)
+        self.home_pose = self._optional_array(ps.get("home"))
+        self.drop_pose = self._optional_array(ps.get("drop"))
+        ready_views = ps.get("ready_views")
+        self.ready_views = None if ready_views is None else [np.array(p, dtype=float) for p in ready_views]
+        self.realtime_ready_action = self._optional_array(ps.get("realtime_ready_action"))
+        self.realtime_ready_main = self._optional_array(ps.get("realtime_ready_main"))
+
+        # ---- target-relative close observation pose ----
+        approach = c.get("target_approach") or {}
+        self.target_approach_offset = self._optional_array(approach.get("offset"))
+        self.target_approach_rpy = self._optional_array(approach.get("rpy"))
+
+        # ---- application motion policy (robot-specific) ----
+        self.grasp_policy = c.get("grasp_policy")
 
         # ---- lcm ----
         self.lcm_task_url = c["lcm"]["task_url"]
         self.lcm_cmd_channel = c["lcm"]["cmd_channel"]
         self.lcm_callback_channel = c["lcm"]["callback_channel"]
-        self.lcm_arm_address = c["lcm"]["arm"]["address"]
-        self.lcm_arm_port = c["lcm"]["arm"]["port"]
-        self.lcm_arm_ttl = c["lcm"]["arm"]["ttl"]
+        arm_lcm = c["lcm"]["arm"]
+        self.lcm_arm_url = arm_lcm.get("url")
+        self.lcm_arm_address = arm_lcm.get("address")
+        self.lcm_arm_port = arm_lcm.get("port")
+        self.lcm_arm_ttl = arm_lcm.get("ttl")
+
+    @staticmethod
+    def _optional_array(value):
+        return None if value is None else np.array(value, dtype=float)
+
+    def missing_for_grasp_lcm(self):
+        """Return unset parameters required by the live LCM grasp application."""
+        required = {
+            "poses.home": self.home_pose,
+            "poses.drop": self.drop_pose,
+            "poses.ready_views": self.ready_views,
+            "grasp_policy": self.grasp_policy,
+            "lcm.task_url": self.lcm_task_url,
+            "lcm.cmd_channel": self.lcm_cmd_channel,
+            "lcm.callback_channel": self.lcm_callback_channel,
+        }
+        return [name for name, value in required.items() if value is None]
 
     def in_workspace(self, x, y, z):
-        """位姿是否在工作空间安全边界内(统一边界,供各入口共用)。"""
+        """Check configured workspace axes; an omitted Z bound disables its check."""
         return (self.ws_x[0] <= x <= self.ws_x[1]
                 and self.ws_y[0] <= y <= self.ws_y[1]
-                and z <= self.ws_z_max)
+                and (self.ws_z_max is None or z <= self.ws_z_max))

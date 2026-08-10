@@ -10,19 +10,20 @@ from registry import register
 DEPTH_MAX_M = 3.0   # 与原 main_pipeline 的 make_point_cloud DEPTH_MAX_MM(3000mm)一致
 
 
-@register("visualizer", "o3d")
-def build_o3d_visualizer(ctx=None, cfg=None, hw=None, manager=None, **kw):
+@register("visualizer", "o3d", requires=("camera",))
+def build_o3d_visualizer(cfg=None, hw=None, ctx=None, dependencies=None):
     vcfg = cfg or {}
     vis = o3d.visualization.VisualizerWithKeyCallback()
     vis.create_window(window_name=vcfg.get("title", "Grasp"))
     pcd = o3d.geometry.PointCloud()
     state = {"added": False}
     grasp_geoms = []
+    camera = dependencies["camera"]
 
     class O3DVisualizer:
         def update_cloud(self, color, depth_m):
-            cam = manager.get("camera")
-            fx, fy, cx, cy = cam.color_fx, cam.color_fy, cam.color_cx, cam.color_cy
+            fx, fy = camera.color_fx, camera.color_fy
+            cx, cy = camera.color_cx, camera.color_cy
             H, W = depth_m.shape
             u, v = np.meshgrid(np.arange(W), np.arange(H))
             valid = (depth_m > 0) & (depth_m < DEPTH_MAX_M)
@@ -58,7 +59,7 @@ def build_o3d_visualizer(ctx=None, cfg=None, hw=None, manager=None, **kw):
         def render(self):
             vis.update_renderer()
 
-        def release(self):
+        def close(self):
             vis.destroy_window()
 
     return O3DVisualizer()

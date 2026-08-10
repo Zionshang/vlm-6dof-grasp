@@ -5,9 +5,12 @@
 from registry import register
 
 
-@register("executor", "grasp")
-def build_grasp_executor(ctx=None, cfg=None, hw=None, manager=None, **kw):
-    from grasp_executor import GraspExecutor
-    client = manager.get("robot")
+@register("executor", "grasp", requires=("robot",))
+def build_grasp_executor(cfg=None, hw=None, ctx=None, dependencies=None):
+    from grasp_executor import GraspExecutor, GraspStep
+    client = dependencies["robot"]
     grip_max = hw.gripper_max_width if hw is not None else 0.085
-    return GraspExecutor(client, hw, grip_max)
+    steps = [GraspStep(**step) for step in cfg.get("steps", [])]
+    if cfg.get("require_home") and (not steps or not steps[-1].use_home_pose):
+        raise ValueError("Grasp sequence must end with a HOME pose step")
+    return GraspExecutor(client, hw, grip_max, steps)

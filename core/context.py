@@ -1,8 +1,4 @@
-"""FrameContext:组件间共享的最新数据(解耦传递)。
-
-Node(camera)写 color/depth/ir;Agent(depth/detector/grasp)读 ctx 再写 ctx;
-Handler(visualizer/executor)读 ctx。组件不互相直接依赖,统一经 ctx 传递。
-"""
+"""Mutable latest-frame buffer shared by camera/depth orchestration."""
 from dataclasses import dataclass, field
 from typing import Any, Optional
 import numpy as np

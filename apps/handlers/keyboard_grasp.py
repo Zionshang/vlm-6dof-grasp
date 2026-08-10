@@ -1,20 +1,39 @@
-"""run_realtime 业务 Handler:键盘事件驱动抓取(h=grasp / space=home / n=prompt / q=quit)。
-
-逻辑等价于原 run_realtime.RealtimeGraspController(键盘 listener + cv2 预览 + action)。
-依赖 pynput;抓取动作走 GraspAction。
-"""
+"""Keyboard event loop for the single-view realtime grasp application."""
 import time
 import cv2
-from pynput import keyboard
-from grasp_action import GraspAction
+import numpy as np
+
+from grasp_executor import GraspStep
+from grasp_perception import GraspPerception
+from transform import convert_new
+
+
+DEFAULT_STEPS = [
+    GraspStep("approach", gripper="max", offset=(0.0, 0.0, 0.05), preview=1.3, wait=1.5),
+    GraspStep("reach", gripper="max", preview=0.5, wait=0.7),
+    GraspStep("grasp", gripper="target", preview=0.5, wait=0.8),
+    GraspStep("lift", gripper="target", offset=(0.0, 0.0, 0.06), preview=0.5, wait=0.8),
+    GraspStep("home", gripper="target", use_home_pose=True, preview=1.5, wait=1.5),
+    GraspStep("reopen", gripper="max", use_home_pose=True, preview=0.5),
+]
 
 
 class KeyboardGraspHandler:
-    def __init__(self, cam, detector, segmenter, grasp_engine, selector, executor, robot, hw,
-                 prompt="mug"):
-        self.cam = cam
-        self.action = GraspAction(detector, segmenter, grasp_engine, selector, executor, robot, hw)
-        self.robot = robot
+    def __init__(self, manager, hw, prompt="mug", output_dir="output"):
+        from pynput import keyboard
+
+        self.keyboard = keyboard
+        self.cam = manager.require("camera")
+        self.depth = manager.require("depth")
+        self.perception = GraspPerception(manager, output_dir)
+        self.executor = manager.require("executor")
+        self.robot = manager.require("robot")
+        self.hw = hw
+        self.target_width_offset = float(
+            (manager.app_config.get("pipeline") or {}).get(
+                "target_width_offset", -0.05,
+            )
+        )
         self.prompt = prompt
         self._ctx = None
         self.key_actions = {
@@ -35,9 +54,7 @@ class KeyboardGraspHandler:
         self._ctx = ctx
         cam = components.get("camera") or self.cam
         cam.step(ctx)                                    # 取 color + depth(mm)
-        depth = components.get("depth")
-        if depth is not None and hasattr(depth, "step"):
-            depth.step(ctx)                              # raw: mm → 米
+        self.depth.step(ctx)                             # raw: mm → 米
 
         if ctx.color is not None:
             cv2.imshow("Realtime Grasp (h grasp / q quit / n prompt / space home)",
@@ -47,7 +64,7 @@ class KeyboardGraspHandler:
         for key, fn in self.key_actions.items():
             if self.key_pressed.get(key, False):
                 fn(ctx, components)
-                if key != keyboard.KeyCode.from_char("q"):
+                if key != self.keyboard.KeyCode.from_char("q"):
                     self._wait_release(key)
         time.sleep(0.01)
 
@@ -69,7 +86,24 @@ class KeyboardGraspHandler:
         if ctx.color is None or ctx.depth is None:
             return
         print(f"[grasp] '{self.prompt}' ...")
-        ok, reason = self.action.run(ctx.color, ctx.depth, self.prompt)
+        grasps = self.perception.generate(ctx.color, ctx.depth, self.prompt)
+        selected = self.perception.select(ctx.color, grasps)
+        if selected is None:
+            print("[grasp] detection/grasp generation failed FAILED")
+            return
+        state = self.robot.get_state()
+        if not state:
+            print("[grasp] robot state unavailable FAILED")
+            return
+        command = convert_new(
+            np.asarray(selected["translation"]), np.asarray(selected["rotation"]),
+            state["ee_pose"], self.hw.hand_eye_r, self.hw.hand_eye_t,
+        )
+        if not self.hw.in_workspace(*command[:3]):
+            print(f"[grasp] out of workspace {command[:3]} FAILED")
+            return
+        width = max(0.0, selected["width"] + self.target_width_offset)
+        ok, reason = self.executor.run_sequence(command, width, DEFAULT_STEPS)
         print(f"[grasp] {reason}" + (" OK" if ok else " FAILED"))
 
     def _home(self, ctx, components):
@@ -88,7 +122,7 @@ class KeyboardGraspHandler:
     def _quit(self, ctx, components):
         ctx.state["quit"] = True
 
-    def release(self):
+    def close(self):
         try:
             self._listener.stop()
         except Exception:

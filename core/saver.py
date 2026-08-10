@@ -51,12 +51,18 @@ def save_capture(output_dir, color, depth, timestamp):
     """保存 RGBD capture 到 output_dir/captures/{ts}_color.png + _depth.png。"""
     base = Path(output_dir) / "captures"
     save_image(base / f"{timestamp}_color.png", color, is_rgb=True)
+    depth = np.asarray(depth)
+    # FFS outputs metres as float; store lossless millimetres in uint16 PNG.
+    if np.issubdtype(depth.dtype, np.floating):
+        depth = np.clip(depth * 1000.0, 0, np.iinfo(np.uint16).max).astype(np.uint16)
     save_image(base / f"{timestamp}_depth.png", depth, is_rgb=False)
 
 
-def save_2d_grasp(output_dir, imgs):
-    """保存 2D grasp 候选图到 output_dir/2D_grasp/{i}.jpg(每次清空重建)。返回路径列表(str)。"""
+def save_2d_grasp(output_dir, imgs, subdir=None):
+    """保存 2D grasp 图到 output_dir/2D_grasp[/subdir]/{i}.jpg。"""
     d = Path(output_dir) / "2D_grasp"
+    if subdir:
+        d /= subdir
     if d.exists():
         shutil.rmtree(d)
     return [str(save_image(d / f"{i}.jpg", img, is_rgb=True)) for i, img in enumerate(imgs)]

@@ -1,95 +1,99 @@
 # VLM-6DoF-Grasp
 
-## 环境部署
+Config-driven 6DoF grasping with RealSense, FFS, VLM/FastSAM,
+EconomicGrasp and pluggable robot backends.
 
-以下命令均在仓库根目录执行。按顺序安装：economic_grasp → fastsam → vlm。
+## Architecture
 
-### 1) 安装 economic_grasp
+- `config/hardware/`: physical calibration, robot poses, workspace bounds and
+  communication parameters.
+- `config/apps/`: component composition and application-level pipeline options.
+- `core/components/`: backend plugins registered by `(role, backend)`.
+- `core/manager.py`: dependency resolution, preflight and lifecycle ownership.
+- `core/grasp_perception.py`: the shared
+  detect → segment → generate → select chain.
+- `apps/`: application workflows and event/transport entrypoints.
 
-依赖：Python 3.10 + CUDA 12.8（对应 Blackwell 架构 GPU，按需调整）。
+Component factories declare dependencies in the single `core/registry.py`
+registry. They receive only their configuration, hardware profile, frame
+context and declared dependencies; they do not depend on the Manager.
 
-1.1 PyTorch & CUDA
+## Ollama
 
-```bash
-conda install openblas-devel -c anaconda
-conda install -c nvidia/label/cuda-12.8.0 cuda-toolkit
-pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
-```
-
-1.2 MinkowskiEngine
-
-```bash
-cd economic_grasp/libs/MinkowskiEngine
-conda install ninja
-python setup.py install
-cd -
-```
-
-1.3 Pip 依赖
+Install Ollama and download the configured detector model:
 
 ```bash
-pip install -r economic_grasp/requirements.txt
-```
-
-1.4 PointNet2
-
-```bash
-cd economic_grasp/libs/pointnet2
-python setup.py install
-cd -
-```
-
-1.5 KNN
-
-```bash
-cd economic_grasp/libs/knn
-python setup.py install
-cd -
-```
-
-1.6 GraspNetAPI
-
-```bash
-cd economic_grasp/libs/graspnetAPI
-pip install .
-cd -
-```
-
-### 2) 安装 fastsam
-
-```bash
-pip install -r fastsam/requirements.txt
-```
-
-### 3) 安装 vlm
-
-先安装 ollama，并拉取模型：
-
-```bash
-# 安装 ollama
 curl -fsSL https://ollama.com/install.sh | sh
-
-# 拉取模型（按需替换模型名，本项目使用的是）
-ollama pull qwen3-vl:32b-instruct-q4_K_M
+ollama pull qwen3-vl:8b-instruct-q4_K_M
+sudo systemctl enable --now ollama
 ```
+
+`config/apps/grasp_lcm.yaml` limits the VLM context to 4096 and sets
+`keep_alive: 0`. Manager preflight checks the exact model and unloads an old
+resident instance before loading CUDA-heavy components.
+
+## Formal entrypoints
+
+Piper+D405 feedback-verified grasp test:
 
 ```bash
-pip install -r vlm/requirements.txt
+python apps/piper_run_test.py --prompt orange
 ```
 
-## 运行 Pipeline
+The test verifies ARM_STATE, returns home, starts D405+FFS, moves to the
+configured observation pose, runs VLM+FastSAM+EconomicGrasp, selects the first
+geometrically valid grasp, executes the configured five-step sequence and
+visualizes the candidates. Every Cartesian/gripper step is feedback-verified;
+any failure after robot-state verification returns home.
 
-入口脚本：`apps/main_pipeline.py`
+Task-LCM grasp service (requires a hardware profile with task LCM, drop pose
+and grasp policy configured, and an app YAML selecting the matching robot
+backend):
 
 ```bash
-python apps/main_pipeline.py \
-  --data_dir example_data \
-  --prompt "方盒子"
+python apps/run_grasp_lcm.py \
+  --hardware-profile config/hardware/<profile>.yaml \
+  --app-config config/apps/<matching-grasp-app>.yaml
 ```
 
-常用参数：
-- `--prompt`：要检测的目标文本
-- `--fastsam`：FastSAM 权重路径
-- `--grasp_checkpoint`：EconomicGrasp 权重（不传则只做 VLM + 分割）
-- `--use_sam`：是否使用 FastSAM（默认 True）
-- `--use_collision`：是否做碰撞检测（默认 True）
+The current `grasp_lcm.yaml` selects `piper_lcm`; Piper task-LCM channels,
+drop pose and the formal service policy are intentionally still unset. The
+standalone `piper_run_test.py` sequence is configured separately in its app
+YAML.
+
+D435i live grasp visualization:
+
+```bash
+python apps/main_pipeline.py --use_ffs true
+python apps/main_pipeline.py --use_ffs false
+```
+
+Keyboard-triggered X5 realtime grasping:
+
+```bash
+python apps/run_realtime.py
+```
+
+## Adding a backend
+
+Implement the role's existing domain interface, add a factory under the
+matching `core/components/<role>/` package, and register it:
+
+```python
+@register("depth", "my_depth", requires=("camera",))
+def build_my_depth(cfg, hw, ctx, dependencies):
+    return MyDepth(camera=dependencies["camera"], **cfg)
+```
+
+Then select `backend: my_depth` in an app YAML. No application workflow or
+Manager branch should be added.
+
+## Framework tests
+
+The framework regression suite uses only the Python standard library runner:
+
+```bash
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+Hardware programs are intentionally not started by the automated test suite.

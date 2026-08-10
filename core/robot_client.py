@@ -1,12 +1,7 @@
-"""机械臂驱动层:可插拔。
-
-定义 RobotClient 协议与工厂 make_robot_client。换机械臂(其他型号 / 其他通信)只需:
-1. 新增一个实现 RobotClient 接口的 client 类
-2. 在 make_robot_client 里按 hw.robot_kind 增加一个分支
-入口 / pipeline / executor 无需改动(client 已通过构造注入)。
-"""
+"""Robot client contracts and adapters used by robot plugins."""
+from pathlib import Path
 from typing import Protocol, Any
-import numpy as np
+import sys
 
 
 class RobotConfig(Protocol):
@@ -22,15 +17,79 @@ class RobotClient(Protocol):
     def get_robot_config(self) -> RobotConfig: ...
 
 
-def make_robot_client(hw):
-    """根据硬件 profile 的 robot.kind 选择机械臂 client。换臂时在此加分支。"""
-    kind = getattr(hw, "robot_kind", "arx5_lcm")
-    if kind == "arx5_lcm":
-        from communication.lcm.lcm_client import Arx5LcmClient
-        return Arx5LcmClient(
-            url="",
-            address=hw.lcm_arm_address,
-            port=hw.lcm_arm_port,
-            ttl=hw.lcm_arm_ttl,
+class SafeRobotClient:
+    """Transparent driver wrapper with an explicit safety lifecycle hook."""
+
+    def __init__(self, client, safe_stop_enabled=True):
+        self._managed_client = client
+        self._safe_stop_enabled = safe_stop_enabled
+
+    def __getattr__(self, name):
+        return getattr(self._managed_client, name)
+
+    def enable_safe_stop(self):
+        self._safe_stop_enabled = True
+
+    def disable_safe_stop(self):
+        self._safe_stop_enabled = False
+
+    @property
+    def safe_stop_enabled(self):
+        return self._safe_stop_enabled
+
+    def safe_stop(self):
+        if self._safe_stop_enabled:
+            self._managed_client.reset_to_home()
+            self._safe_stop_enabled = False
+
+
+class PiperLcmRobotClient:
+    """Adapter from agx_control ArmLcmClient to the local RobotClient protocol.
+
+    Both agx_control and ``scipy.Rotation.from_euler('xyz', ...)`` represent
+    ``[roll, pitch, yaw]`` as fixed-axis XYZ rotations, with the resulting
+    matrix ``Rz(yaw) @ Ry(pitch) @ Rx(roll)``. No Euler remapping is needed.
+    """
+
+    def __init__(self, client):
+        self._client = client
+
+    @classmethod
+    def from_hardware(cls, hw):
+        driver_root = getattr(hw, "robot_driver_root", None)
+        if driver_root:
+            root = str(Path(driver_root).expanduser().resolve())
+            if root not in sys.path:
+                sys.path.insert(0, root)
+        try:
+            from communication.lcm.arm_lcm_client import ArmLcmClient
+        except ImportError as exc:
+            raise ImportError(
+                "Cannot import Piper ArmLcmClient; install agx_control or set "
+                "robot.driver_root in the hardware profile"
+            ) from exc
+
+        url = getattr(hw, "lcm_arm_url", None)
+        if not url:
+            raise ValueError("Piper profile requires lcm.arm.url")
+        return cls(ArmLcmClient(url=url))
+
+    def set_ee_pose(self, pose, gripper_pos, *args, **kwargs):
+        """Send Piper pose and gripper only; Piper has no duration control."""
+        self._client.set_cartesian_cmd(
+            tcp_pose=list(pose), gripper=float(gripper_pos),
         )
-    raise ValueError(f"Unknown robot kind: {kind}")
+
+    def get_state(self):
+        state = self._client.get_state()
+        if state is None:
+            return None
+        result = dict(state)
+        result["ee_pose"] = list(state["tcp_pose"])
+        return result
+
+    def reset_to_home(self):
+        self._client.set_to_home()
+
+    def set_to_passive(self):
+        self._client.set_to_passive()

@@ -6,7 +6,7 @@ from registry import register
 
 
 @register("depth", "raw")
-def build_raw_depth(ctx=None, cfg=None, hw=None, manager=None, **kw):
+def build_raw_depth(cfg=None, hw=None, ctx=None, dependencies=None):
     class RawDepth:
         factor_depth = 1.0      # step 已把 ctx.depth 转成米,grasp_engine 用 factor=1
 

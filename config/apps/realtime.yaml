@@ -3,6 +3,7 @@
 components:
   camera:
     backend: d405
+    discard_frames: 5
   depth:
     backend: raw            # 硬件 depth(mm)→ 米
   detector:
@@ -24,3 +25,10 @@ components:
   robot:
     backend: arx5_lcm
   # run_realtime 用 cv2 预览(Handler 内),不配 visualizer 组件
+
+pipeline:
+  predict_topk: 100
+  selector_topk: 8
+  filter_orientation: false
+  save_debug: false
+  target_width_offset: -0.05

@@ -1,263 +1,227 @@
+"""Config-driven LCM grasp service.
+
+Components come from ``config/apps/grasp_lcm.yaml``; this file contains only
+the application-specific multi-view workflow and task-LCM protocol.
+"""
+import argparse
+import json
 import sys
 import time
-import argparse
-import numpy as np
-import cv2
-import lcm
-import threading
-import json
 from pathlib import Path
 
-# Path setup
+import numpy as np
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import paths
+
+from grasp_executor import GraspStep
+from grasp_geometry import box_center_to_base
+from grasp_perception import GraspPerception
+from hardware import HardwareConfig
+from manager import GraspManager
+from robot_safety import wait_for_robot_state
+from saver import save_capture
+from transform import convert_new
+
+
 ROOT = paths.PROJECT_ROOT
 
-from robot_client import make_robot_client
-from pipeline import GraspPipeline
-from camera import RealSenseD405
-from transform import convert_new
-from grasping.selector import VLMSelector
-from saver import save_capture
-from hardware import HardwareConfig
-from grasp_executor import GraspExecutor, GraspStep
+
+class GraspWorkflow:
+    """Multi-view locate → grasp inference → robot execution."""
+
+    def __init__(self, manager, output_dir):
+        self.manager, self.hw = manager, manager.hw
+        self.output_dir = output_dir
+        self.perception = GraspPerception(manager, output_dir)
+        self.engine = self.perception.grasp_engine
+        self.robot = manager.require("robot")
+        self.executor = manager.require("executor")
+        self.policy = self.hw.grasp_policy
+        self.steps = ([GraspStep(**step) for step in self.policy["steps"]]
+                      if self.policy else [])
+
+    def grasp(self, prompt):
+        status = self._approach_target(prompt)
+        if status:
+            return False, status
+
+        color, depth = self.capture(self.policy["grasp_flush_frames"])
+        if color is None or depth is None:
+            return False, "camera_error"
+        run_id = time.strftime("%Y%m%d-%H%M%S")
+        save_capture(self.output_dir, color, depth, run_id)
+
+        selected = self._select_candidate(color, depth, prompt, run_id)
+        if selected is None:
+            return False, "detection/grasp_generation_failed"
+
+        state = self.robot.get_state()
+        if not state:
+            return False, "robot_state_unavailable"
+        command = convert_new(
+            np.asarray(selected["translation"]), np.asarray(selected["rotation"]),
+            state["ee_pose"], self.hw.hand_eye_r, self.hw.hand_eye_t,
+        )
+        if not self.hw.in_workspace(*command[:3]):
+            print(f"[Error] Safety violation: {command}, out of bounds!")
+            return False, "safety_violation"
+
+        self._adjust_ry(command)
+        width = np.clip(
+            selected["width"] + self.policy["target_width_offset"],
+            0.0, self.hw.gripper_max_width,
+        )
+        print(f"[Info] Converted Arm Command: {command}")
+        return self.executor.run_sequence(command, float(width), self.steps)
+
+    def release(self):
+        cfg, pose = self.policy["release"], self.hw.drop_pose
+        state = self.robot.get_state()
+        width = float(state.get("gripper_pos", 0.0))
+        print(f"[Robot] Executing Release at {pose[:3]}...")
+        self.robot.set_ee_pose(pose, width, cfg["move_preview"])
+        time.sleep(cfg["move_wait"])
+        self.robot.set_ee_pose(pose, self.hw.gripper_max_width, cfg["open_preview"])
+        time.sleep(cfg["open_wait"])
+        self.robot.reset_to_home()
+        return True
+
+    def _approach_target(self, prompt):
+        target = None
+        for index, pose in enumerate(self.hw.ready_views):
+            print(f"[Robot] Moving to Ready Pose {index + 1}...")
+            self.robot.set_ee_pose(
+                pose, self.hw.gripper_approach_width,
+                self.policy["ready_preview_time"],
+            )
+            time.sleep(self.policy["ready_wait"])
+            color, depth = self.capture(self.policy["ready_flush_frames"])
+            if color is None or depth is None:
+                continue
+
+            run_id = time.strftime(f"%Y%m%d-%H%M%S_ready{index}")
+            save_capture(self.output_dir, color, depth, run_id)
+            state = self.robot.get_state()
+            if state:
+                detection = self.perception.detect(color, prompt)
+                if detection and detection.boxes:
+                    target = box_center_to_base(
+                        depth, detection.boxes[0], self.engine.intrinsic,
+                        state["ee_pose"], self.hw.hand_eye_r, self.hw.hand_eye_t,
+                    )
+            if target is not None:
+                print(f"[Approach] Target found at Pose {index + 1}")
+                break
+
+        if target is None:
+            print("[Approach] No target found in any view.")
+            return "detect_none"
+
+        cfg = self.policy["coarse_approach"]
+        pose = np.r_[np.asarray(target) + cfg["offset"], cfg["rpy"]]
+        if not self.hw.in_workspace(*pose[:3]):
+            print(f"[Approach] Approach pose unsafe: {pose}. Staying.")
+            return "approach_unsafe"
+        print(f"[Approach] Moving to closer view: {pose}")
+        self.robot.set_ee_pose(pose, self.hw.gripper_approach_width, cfg["preview_time"])
+        time.sleep(cfg["wait"])
+        return None
+
+    def capture(self, flush_count=None):
+        return self.perception.capture(flush_count)
+
+    def generate_grasps(self, color, depth, prompt, run_id):
+        return self.perception.generate(color, depth, prompt, run_id)
+
+    def _select_candidate(self, color, depth, prompt, run_id):
+        grasps = self.generate_grasps(color, depth, prompt, run_id)
+        if grasps is None:
+            return None
+        return self.perception.select(color, grasps)
+
+    def _adjust_ry(self, command):
+        cfg, ry = self.policy.get("ry_alignment"), command[4]
+        if not cfg or not cfg["input"][0] <= ry <= cfg["input"][1]:
+            return
+        in_low, in_high = cfg["input"]
+        out_low, out_high = cfg["output"]
+        command[4] = out_low + (ry - in_low) / (in_high - in_low) * (out_high - out_low)
 
 
-# 抓取执行序列(参数为 X5_umi 实测调校值,改动需谨慎)
-GRASP_STEPS = [
-    GraspStep("approach", gripper="max",    offset=(-0.06, 0.0, 0.05), preview=1.3, correct=True),
-    GraspStep("reach",    gripper="max",    preview=0.5, correct=True),
-    GraspStep("grasp",    gripper="target", preview=0.5, wait=0.8),
-    GraspStep("lift",     gripper="target", offset=(0.05, 0.0, 0.08), fix_rpy=(0.0, None, 0.0), preview=1.0, wait=1.2),
-    GraspStep("home",     gripper="target", use_home_pose=True, preview=2.0, wait=2.0),
-]
+class GraspTaskLcmNode:
+    """Task JSON transport; grasp logic stays in ``GraspWorkflow``."""
 
+    def __init__(self, workflow):
+        import lcm
 
-class GraspLcmNode:
-    def __init__(self, robot_client, pipeline, cam):
-        self.client = robot_client
-        self.pipeline = pipeline
-        self.cam = cam
-        hw = pipeline.hw
-        self.grip_max = hw.gripper_max_width
-        self.executor = GraspExecutor(self.client, hw, self.grip_max)
+        self.workflow, self.hw = workflow, workflow.hw
+        self.lc = lcm.LCM(self.hw.lcm_task_url)
+        self.lc.subscribe(self.hw.lcm_cmd_channel, self._on_task)
 
-        # Initialize Task LCM
-        self.lc = lcm.LCM(hw.lcm_task_url)
-        self.lc.subscribe(hw.lcm_cmd_channel, self.on_grasp_cmd)
-        print(f"[LCM] Listening on {hw.lcm_task_url} [Topic: {hw.lcm_cmd_channel}]")
-
-        # VLM Selector
-        model_name = self.pipeline.cfg.get("grasp_selection_model", "qwen3-vl:8b-instruct-q4_K_M")
-        self.selector = VLMSelector(model_name=model_name, prompts_dir=str(ROOT / "vlm/prompts"))
-        
-        # Async Warmup
-        def _warmup_thread():
-            self.pipeline.detector.warmup()
-        
-        self.warmup_thread = threading.Thread(target=_warmup_thread, daemon=True)
-        self.warmup_thread.start()
-
-    def start(self):
-        print("[System] Ready. Waiting for commands...")
+    def run(self):
+        print(f"[LCM] Listening on {self.hw.lcm_task_url} [{self.hw.lcm_cmd_channel}]")
         try:
             while True:
                 self.lc.handle()
         except KeyboardInterrupt:
-            self.shutdown()
+            self.workflow.manager.release_resources()
 
-    def on_grasp_cmd(self, channel, data):
-        success = False
-        msg_text = "unknown_error"
-        task_id = None
+    def _on_task(self, channel, data):
+        success, reason, task_id = False, "unknown_error", None
         try:
-            msg = json.loads(data.decode('utf-8'))
-            task_id = msg.get("id")
-            kind = int(msg.get("kind", -1))
-            
-            print(f"\n[LCM] Received Task ID: {task_id}, Kind: {kind}, Obj: {msg.get('obj')}")
-            
-            if kind == 1: # Grasp
-                success, msg_text = self.execute_grasp(msg.get("obj"))
-            elif kind == 2: # Release
-                success = self.execute_release()
-                msg_text = "success" if success else "release_failed"
+            message = json.loads(data.decode("utf-8"))
+            task_id, kind = message.get("id"), int(message.get("kind", -1))
+            if kind == 1:
+                success, reason = self.workflow.grasp(message.get("obj"))
+            elif kind == 2:
+                success = self.workflow.release()
+                reason = "success" if success else "release_failed"
             else:
-                msg_text = "invalid_command"
-
-        except Exception as e:
-            print(f"[Error] LCM Process Failed: {e}")
-            msg_text = str(e)
-
-        if not success: self.client.reset_to_home()
-
+                reason = "invalid_command"
+        except Exception as exc:
+            print(f"[Error] LCM Process Failed: {exc}")
+            reason = str(exc)
+        if not success:
+            self.workflow.robot.reset_to_home()
         if task_id:
-            # kind: 1=Success, 0=Failure. obj: Failure Reason (or 'success')
-            res = {
-                "id": task_id, 
-                "kind": 1 if success else 0, 
-                "obj": "success" if success else msg_text
-            }
-            self.lc.publish(self.pipeline.hw.lcm_callback_channel, json.dumps(res).encode('utf-8'))
-            print(f"[LCM] Sent Result: {res}")
+            response = {"id": task_id, "kind": int(success),
+                        "obj": "success" if success else reason}
+            self.lc.publish(self.hw.lcm_callback_channel, json.dumps(response).encode())
 
-    def execute_release(self):
-        drop_pose = self.pipeline.hw.drop_pose
-        print(f"[Robot] Executing Release at {drop_pose[:3]}...")
-        
-        # 1. Move to Drop Pose (Maintain Hold)
-        curr_width = float(self.client.get_state().get("gripper_pos", 0.0))
-        self.client.set_ee_pose(drop_pose, gripper_pos=curr_width, preview_time=1.7)
-        time.sleep(2.0)
 
-        # 2. Open Gripper
-        self.client.set_ee_pose(drop_pose, gripper_pos=self.grip_max, preview_time=0.5)
-        time.sleep(1.0)
-        
-        # 3. Home
-        self.client.reset_to_home()
-        return True
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--hardware-profile", default="config/hardware/piper_d405.yaml")
+    parser.add_argument("--app-config", default="config/apps/grasp_lcm.yaml")
+    parser.add_argument("--output-dir", default="output")
+    return parser.parse_args()
 
-    def _approach_target(self, prompt="object"):
-        """
-        Move to Multi-View Ready Pose -> Detect Target -> Move Closer (if valid)
-        """
-        # 1. Multi-View Ready Poses
-        ready_poses = self.pipeline.hw.ready_views
-        
-        target_pos = None
-        for i, pose in enumerate(ready_poses):
-            print(f"[Robot] Moving to Ready Pose {i+1}...")
-            self.client.set_ee_pose(pose, self.pipeline.hw.gripper_approach_width, preview_time=1.5)
-            time.sleep(1.8)
-            
-            # Capture & Locate
-            for _ in range(10): c, d = self.cam.get_frames()
-            if c is None: continue
-            
-            ts = time.strftime(f"%Y%m%d-%H%M%S_ready{i}")
-            save_capture(self.pipeline.output_dir, c, d, ts)
-            
-            st = self.client.get_state()
-            if not st: continue
-            tf = (np.array(st['ee_pose']), self.pipeline.hw.hand_eye_r, self.pipeline.hw.hand_eye_t)
-            
-            # Try to find target
-            res = self.pipeline.get_target_position(d, c, prompt, run_id=ts, transform_info=tf)
-            if res is not None:
-                target_pos = res
-                print(f"[Approach] Target found at Pose {i+1}")
-                break
-        
-        if target_pos is None:
-            print("[Approach] No target found in any view.")
-            return "detect_none"
-
-        # 3. Check Bounds
-        x, y, z = target_pos
-        # 4. Compute Approach Pose Logic: x-0.17, y, z+0.17 | Rot: 0.0, 0.9, 0.0
-        approach_pose = np.array([x - 0.13, y, z + 0.10, 0.0, 0.8, 0.0])
-        
-        # Check Approach Pose Safety
-        ax, ay, az = approach_pose[:3]
-        if not self.pipeline.hw.in_workspace(ax, ay, az):
-             print(f"[Approach] Approach pose unsafe: {approach_pose}. Staying.")
-             return "approach_unsafe"
-
-        # 5. Move Closer
-        print(f"[Approach] Moving to closer view: {approach_pose}")
-        self.client.set_ee_pose(approach_pose, self.pipeline.hw.gripper_approach_width, preview_time=1.5)
-        time.sleep(1.5)
-
-    def execute_grasp(self, prompt):
-        # 0. Coarse Approach (Replaces simple Ready Pose)
-        approach_res = self._approach_target(prompt)
-        if approach_res == "detect_none":
-            return False, "detect_none"
-        elif approach_res == "approach_unsafe":
-            return False, "approach_unsafe"
-
-        # 1. Capture & Detection (Flush buffer first)
-        for _ in range(20): 
-            color, depth = self.cam.get_frames()
-        if color is None: 
-            print("[Error] Camera frame not available.")
-            return False, "camera_error"
-        
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        save_capture(self.pipeline.output_dir, color, depth, timestamp)
-
-        # Reuse pipeline with updated prompt
-        trans_list, rot_list, width_list = self.pipeline.run(color, depth, prompt=prompt, run_id=timestamp)
-
-        if trans_list is None:
-            print("[Error] Detection failed or No valid grasps found.")
-            return False, "detection/grasp_generation_failed"
-
-        # 2. Grasp Selection(可插拔 selector:默认 VLM 二次选优,可换 FirstGraspSelector 跳过)
-        idx, candidates = self.selector.select(
-            color, trans_list, rot_list, width_list,
-            self.pipeline.grasp_engine.intrinsic, top_k=8, output_dir=self.pipeline.output_dir
-        )
-        sel = candidates[idx]
-        
-        # 3. Coordinate Conversion & Safety Check
-        curr_pose = self.client.get_state()['ee_pose']
-        arm_cmd = convert_new(np.array(sel['translation']), np.array(sel['rotation']), 
-                              curr_pose, self.pipeline.hw.hand_eye_r, self.pipeline.hw.hand_eye_t)
-        
-        x, y, z = arm_cmd[:3]
-        if not self.pipeline.hw.in_workspace(x, y, z):
-            print(f"[Error] Safety violation: {arm_cmd}, out of bounds!")
-            return False, "safety_violation"
-        print(f"[Info] Converted Arm Command: {arm_cmd}")
-
-        # Ry alignment for better pose
-        ry = arm_cmd[4]
-        if 0 <= ry <= 0.7:
-            print(f"[Adjust] Original Ry {ry:.3f}")
-            # Map [0, 0.7] -> [0.7, 0.8] linearly
-            arm_cmd[4] = 0.7 + (ry / 0.7) * 0.1
-            print(f"[Adjust] New Ry -> {arm_cmd[4]:.3f}")
-
-        # 4. Execution Sequence (APPROACH -> REACH -> GRASP -> LIFT -> HOME)
-        width = sel['width']
-        target_width = max(0.0, width - 0.05)
-        return self.executor.run_sequence(arm_cmd, target_width, GRASP_STEPS)
-    
-    def shutdown(self):
-        print("Shutting down...")
-        self.cam.release()
-        self.client.reset_to_home()
 
 def main():
-    parser = GraspPipeline.get_parser()
-    parser.set_defaults(prompt="mug")
-    args = parser.parse_args()
+    args = parse_args()
+    hw = HardwareConfig(args.hardware_profile)
+    missing = hw.missing_for_grasp_lcm()
+    if missing:
+        raise SystemExit(f"[Config] '{hw.name}' missing: {', '.join(missing)}")
+    with open(ROOT / args.app_config) as stream:
+        manager = GraspManager(yaml.safe_load(stream), hw=hw)
+    if not manager.handshake():
+        manager.release_resources()
+        raise SystemExit("[Error] Component handshake failed")
 
-    # 1. Hardware Init
-    print("Initializing Robot & Camera...")
-    hw = HardwareConfig()
-    robot_client = make_robot_client(hw)
-    cam = RealSenseD405()
+    try:
+        workflow = GraspWorkflow(manager, ROOT / args.output_dir)
+        if hw.robot_kind == "piper_lcm":
+            wait_for_robot_state(workflow.robot, timeout=10.0)
+            workflow.robot.enable_safe_stop()
+        workflow.robot.reset_to_home()
+        GraspTaskLcmNode(workflow).run()
+    except BaseException:
+        manager.release_resources()
+        raise
 
-    for _ in range(5):
-        if all(f is not None for f in cam.get_frames()): 
-            print("Camera is ready.")
-            break
-        time.sleep(0.5)
-    else:
-        sys.exit("[Error] Camera failed")
-    
-    # 2. Pipeline Init
-    pipeline = GraspPipeline(args)
-    
-    # 3. Robot Ready Pose (Moved to execute_grasp)
-    robot_client.reset_to_home()
-    
-    # 4. Start LCM Node
-    node = GraspLcmNode(robot_client, pipeline, cam)
-    node.start()
 
 if __name__ == "__main__":
     main()

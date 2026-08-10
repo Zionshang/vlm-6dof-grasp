@@ -30,7 +30,10 @@ class ImageSegmentor:
                 device=self.device, 
                 bboxes=bboxes, 
                 conf=conf, 
-                retina_masks=False, 
+                # Return masks in the original RGB image grid.  With False,
+                # Ultralytics keeps masks in its letterboxed inference grid;
+                # blindly resizing those masks later shifts pixel geometry.
+                retina_masks=True,
                 verbose=False,
                 save=False,      
                 save_txt=False,

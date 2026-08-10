@@ -9,7 +9,6 @@ import sys
 import numpy as np
 import torch
 import cv2
-import yaml
 from registry import register
 
 AMP_DTYPE = torch.float16
@@ -34,45 +33,53 @@ def _boot_ffs_env(root):
 
 def align_ir_to_color(depth_ir, cam):
     """left-IR 视角深度(米)→ 彩色视角深度(米),z-buffer 取最近。"""
-    H, W = depth_ir.shape
-    u, v = np.meshgrid(np.arange(W), np.arange(H))
-    valid = depth_ir > 0
-    z = depth_ir
-    x = (u - cam.ir_cx) * z / cam.ir_fx
-    y = (v - cam.ir_cy) * z / cam.ir_fy
-    pts = np.stack([x, y, z], -1).reshape(-1, 3)
+    ir_h, ir_w = depth_ir.shape
+    color_h, color_w = int(cam.height), int(cam.width)
+    if (ir_h, ir_w) != (color_h, color_w):
+        raise ValueError(
+            "FFS depth size must match the calibrated left-IR stream: "
+            f"depth_ir={(ir_h, ir_w)}, stream={(color_h, color_w)}"
+        )
+    u, v = np.meshgrid(np.arange(ir_w), np.arange(ir_h))
+    valid = (depth_ir > 0) & np.isfinite(depth_ir)
+    z = depth_ir[valid]
+    x = (u[valid] - cam.ir_cx) * z / cam.ir_fx
+    y = (v[valid] - cam.ir_cy) * z / cam.ir_fy
+    pts = np.stack([x, y, z], axis=-1)
     pts_c = pts @ cam.ir_to_color_R.T + cam.ir_to_color_T
     zc = pts_c[:, 2]
     uc = pts_c[:, 0] / zc * cam.color_fx + cam.color_cx
     vc = pts_c[:, 1] / zc * cam.color_fy + cam.color_cy
     uci = np.round(uc).astype(np.int32)
     vci = np.round(vc).astype(np.int32)
-    m = valid.reshape(-1) & (zc > 0) & (uci >= 0) & (uci < W) & (vci >= 0) & (vci < H)
-    depth_color = np.zeros(H * W, dtype=np.float32)
-    zc_m, uci_m, vci_m = zc[m], uci[m], vci[m]
-    order = np.argsort(-zc_m)
-    idx = (vci_m[order] * W + uci_m[order]).astype(np.int64)
-    depth_color[idx] = zc_m[order]
-    return depth_color.reshape(H, W)
+    inside = ((zc > 0) & np.isfinite(zc) & np.isfinite(uc) & np.isfinite(vc)
+              & (uci >= 0) & (uci < color_w)
+              & (vci >= 0) & (vci < color_h))
+    depth_color = np.full(color_h * color_w, np.inf, dtype=np.float32)
+    idx = (vci[inside] * color_w + uci[inside]).astype(np.int64)
+    # Several IR points can project to one color pixel.  Keep the nearest
+    # surface explicitly; repeated advanced-index assignment is not a z-buffer.
+    np.minimum.at(depth_color, idx, zc[inside].astype(np.float32))
+    depth_color[~np.isfinite(depth_color)] = 0.0
+    return depth_color.reshape(color_h, color_w)
 
 
-@register("depth", "ffs")
-def build_ffs_depth(ctx=None, cfg=None, hw=None, manager=None, **kw):
+@register("depth", "ffs", requires=("camera",))
+def build_ffs_depth(cfg=None, hw=None, ctx=None, dependencies=None):
     import paths
     ROOT = paths.PROJECT_ROOT
     _boot_ffs_env(ROOT)
     from core.utils.utils import InputPadder   # FFS core(FFS_DIR 已在 sys.path)
 
     fcfg = cfg or {}
+    cam = dependencies["camera"]
     model_dir = str(ROOT / fcfg.get("model", "Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth"))
     scale = float(fcfg.get("scale", 0.5))
     valid_iters = int(fcfg.get("valid_iters", 4))
     max_disp = int(fcfg.get("max_disp", 192))
-    W, H = int(fcfg.get("width", 640)), int(fcfg.get("height", 480))
+    W = int(fcfg.get("width", cam.width))
+    H = int(fcfg.get("height", cam.height))
 
-    with open(f"{os.path.dirname(model_dir)}/cfg.yaml") as ff:
-        mcfg = yaml.safe_load(ff)
-    mcfg.update(valid_iters=valid_iters, max_disp=max_disp, scale=scale)
     print(f"[FFS] loading {model_dir}")
     model = torch.load(model_dir, map_location="cpu", weights_only=False)
     model.args.valid_iters = valid_iters
@@ -88,8 +95,6 @@ def build_ffs_depth(ctx=None, cfg=None, hw=None, manager=None, **kw):
         _ = model.forward(z0, z1, iters=valid_iters, test_mode=True, optimize_build_volume="pytorch1")
     torch.cuda.synchronize()
     print("[FFS] warmup done")
-
-    cam = manager.get("camera")   # 持相机(FFS+align 需 IR/color 内参、IR→color 外参、baseline)
 
     class FFSDepth:
         factor_depth = 1.0   # 输出已是米

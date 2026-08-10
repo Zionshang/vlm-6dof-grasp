@@ -1,7 +1,6 @@
-import sys
 import cv2  # Need cv2 explicitly for reading dimensions
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, Union
 
 from src.core.llm_client import OllamaClient
 from src.core.prompt_manager import PromptManager
@@ -12,14 +11,18 @@ class StaticDetectionApp:
     def __init__(self, 
                  model_name: str, 
                  template_name: str = "standard_detection.v2",
-                 prompts_dir: str = "prompts"):
+                 prompts_dir: str = "prompts", host: str = None,
+                 num_ctx: int = 4096, keep_alive: Union[str, int] = 0):
 
         self.model_name = model_name
         self.template_name = template_name
         self.prompts_dir = prompts_dir
         
         # Initialize components directly
-        self.llm_client = OllamaClient(model_name=self.model_name)
+        self.llm_client = OllamaClient(
+            model_name=self.model_name, host=host,
+            num_ctx=num_ctx, keep_alive=keep_alive,
+        )
         self.prompt_manager = PromptManager(prompt_dir=self.prompts_dir)
         self.bbox_parser = BoundingBoxParser()
 
@@ -74,6 +77,3 @@ class StaticDetectionApp:
             "normalized_boxes": normalized_boxes,
             "raw_response": raw_response
         }
-
-
-
