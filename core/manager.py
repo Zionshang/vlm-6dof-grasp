@@ -44,6 +44,7 @@ class GraspManager:
         self._build_order = list(self.components)
         self._building = []
         self._closed = False
+        self.handshake_error = None
         if eager:
             try:
                 self.initialize()
@@ -149,6 +150,7 @@ class GraspManager:
             print(f"[Manager] handshake TIMEOUT: {[x[0] for x in pending]}{detail}")
         else:
             print("[Manager] handshake OK")
+        self.handshake_error = last_camera_error
         return not pending
 
     def run(self, handler, freq_hz=None):

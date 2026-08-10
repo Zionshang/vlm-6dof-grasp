@@ -8,7 +8,7 @@ def convert_new(
         current_ee_pose,  # 机械臂当前末端在基座坐标系下的位姿 [x, y, z, rx, ry, rz]
         handeye_rot,  # 手眼标定旋转矩阵 (相机→末端)
         handeye_trans,  # 手眼标定平移向量 (相机→末端)
-        gripper_length=0.05
+        grasp_depth,
 ):
     """
     根据 GraspNet 输出 (相机系下的抓取位姿)，计算在机械臂基座系下的抓取位姿。
@@ -16,7 +16,7 @@ def convert_new(
     -----------------------------------------------------------------------------------
         * GraspNet 默认抓取朝向是局部 x 轴；本项目中机械臂末端坐标系约定 x 前、y 左、z 上，
             因此将 "GraspNet.x" 直接对齐到 "Robot.x"（无需轴变换）。
-        * gripper_length 可选地使目标沿抓取局部 +X 前移。
+        * grasp_depth 使物理指尖 TCP 到达 O3D 的指尖前端 X=depth。
     * current_ee_pose 给出的末端姿态是在基座坐标系下 (x,y,z,rx,ry,rz)，
       若你的机械臂控制器/SDK 使用的是其它顺序，需要在此函数内对应修改 R.from_euler() 的顺序。
     -----------------------------------------------------------------------------------
@@ -40,8 +40,10 @@ def convert_new(
     T_align = np.eye(4, dtype=float)
     T_align[:3, :3] = R_align
 
-    # 右乘局部 +X 平移；默认为 0，不修正原始抓取位置。
-    T_align[:3, 3] = [gripper_length, 0, 0]
+    grasp_depth = float(grasp_depth)
+    if not np.isfinite(grasp_depth) or grasp_depth < 0:
+        raise ValueError(f"Invalid grasp depth: {grasp_depth}")
+    T_align[:3, 3] = [grasp_depth, 0, 0]
 
     # 得到【修正后的】抓取姿态 (相机坐标系下)
     T_gripper2cam = T_grasp2cam @ T_align

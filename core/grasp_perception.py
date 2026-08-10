@@ -77,7 +77,7 @@ class GraspPerception:
             return None
         index, candidates = self.selector.select(
             color, grasps.translations, grasps.rotation_matrices, grasps.widths,
-            self.grasp_engine.intrinsic, top_k=self.selector_topk,
+            grasps.depths, self.grasp_engine.intrinsic, top_k=self.selector_topk,
             output_dir=self.output_dir,
         )
         if not candidates or not 0 <= index < len(candidates):

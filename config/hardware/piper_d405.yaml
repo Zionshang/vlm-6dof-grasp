@@ -1,33 +1,15 @@
-# =============================================================================
-# Hardware profile: Piper robot + Intel RealSense D405 (eye-in-hand)
-# -----------------------------------------------------------------------------
-# Confirmed Piper+D405 calibration, arm transport and smoke-test poses.
-# Task-level LCM and grasp/release motion policy remain intentionally unset.
-#
-# Coordinate convention for hand_eye:
-#   camera frame -> end-effector (EE) frame
-#   p_ee = R_camera_to_ee @ p_camera + t_camera_to_ee
-# =============================================================================
+# Piper + eye-in-hand RealSense D405 hardware profile.
 
 name: piper_d405
 
-# Piper arm driver and state/command LCM transport.
 robot:
   kind: piper_lcm
-  # Parent of the external ``communication`` namespace package.
   driver_root: /home/jyx/python_ws/agx_control
 
-# RealSense D405, matching the current 848x480 color-aligned depth pipeline.
 camera:
   kind: d405
-  intrinsic:
-    - [435.75600787289994, 0.0, 423.5139606211078]
-    - [0.0, 435.6741418717883, 243.52287948995928]
-    - [0.0, 0.0, 1.0]
-  dist_coeffs: [-0.061438834574162444, 0.11244487882386699, -0.0008922372006081498, 0.0010226929723920338, -0.09769331639799333]
-  factor_depth: 10000
 
-# Hand-eye calibration: camera -> end-effector (EE).
+# Camera optical frame -> Piper TCP frame.
 hand_eye:
   rotation:
     - [-0.0058521463119453054, -0.34666436695038166, 0.9379709851964703]
@@ -35,35 +17,25 @@ hand_eye:
     - [-0.023481192252286287, -0.9376807768211203, -0.3467036117356649]
   translation: [-0.08795956213685939, 0.006617923571879634, 0.07884006469914297]
 
-# Piper gripper dimensions (metres).
 gripper:
   max_width: 0.10
   approach_width: 0.10
 
-# Confirmed workspace limits (metres). Omitted axes are not safety-checked.
+# Metres; only X/Y are checked.
 workspace_bounds:
   x: [0.0, 0.75]
   y: [-0.65, 0.65]
 
-# Confirmed smoke-test poses [x, y, z, roll, pitch, yaw].
+# [x, y, z, roll, pitch, yaw], metres/radians.
 poses:
   home: [0.203, 0.0, 0.239, 0.0, -0.087, 0.0]
-  drop: null
   ready_views:
     - [0.178, 0.0, 0.223, 0.0, 0.803, 0.0]
 
-# Close observation pose = detected target position + offset, followed by rpy.
 target_approach:
   offset: [-0.13, 0.0, 0.10]
   rpy: [0.0, 0.8, 0.0]
 
-# TODO: calibrate Piper-specific approach, lift, orientation and timing policy.
-grasp_policy: null
-
-# Real-time Piper LCM transport remains to be deployed.
 lcm:
-  task_url: null
-  cmd_channel: null
-  callback_channel: null
   arm:
     url: "udpm://239.255.76.67:7667?ttl=1"

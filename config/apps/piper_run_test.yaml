@@ -1,4 +1,4 @@
-# Piper test: far locate -> close observe -> select -> execute -> visualize.
+# Far locate -> close observe -> generate/visualize/select -> approach/reach test.
 components:
   robot:
     backend: piper_lcm

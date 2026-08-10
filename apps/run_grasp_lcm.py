@@ -63,6 +63,7 @@ class GraspWorkflow:
         command = convert_new(
             np.asarray(selected["translation"]), np.asarray(selected["rotation"]),
             state["ee_pose"], self.hw.hand_eye_r, self.hw.hand_eye_t,
+            selected["depth"],
         )
         if not self.hw.in_workspace(*command[:3]):
             print(f"[Error] Safety violation: {command}, out of bounds!")

@@ -75,20 +75,25 @@ def adjust_ry(command):
     return command
 
 
-def execute_grasp(manager, robot, hw, selected, timeout):
+def test_reach(manager, robot, hw, selected, timeout):
     state = robot.get_state()
     if not state:
-        raise RuntimeError("ARM_STATE unavailable before grasp execution")
+        raise RuntimeError("ARM_STATE unavailable before reach test")
     command = adjust_ry(convert_new(
         np.asarray(selected["translation"]), np.asarray(selected["rotation"]),
         state["ee_pose"], hw.hand_eye_r, hw.hand_eye_t,
+        selected["depth"],
     ))
-    width = float(np.clip(selected["width"] - 0.03, 0.0, hw.gripper_max_width))
-    success, reason = manager.require("executor").run_sequence(
-        command, width, arrival_timeout=timeout,
+    executor = manager.require("executor")
+    success, reason = executor.run_sequence(
+        command, hw.gripper_max_width, steps=executor.steps[:2],
+        arrival_timeout=timeout,
     )
     if not success:
         raise RuntimeError(reason)
+    print("[测试] Reach 保持 30 秒")
+    time.sleep(30)
+    reset_to_home_and_wait(robot, timeout)
 
 
 def parse_args():
@@ -139,7 +144,8 @@ def initialize_system(args):
             manager.initialize()
             perception = GraspPerception(manager, ROOT / args.output_dir)
             if not manager.handshake():
-                raise RuntimeError("Camera handshake failed")
+                detail = manager.handshake_error or "first frame timeout"
+                raise RuntimeError(f"D405 stereo unavailable: {detail}")
         print("[就绪] 感知组件")
         yield hw, manager, robot, perception
     finally:
@@ -189,10 +195,10 @@ def run_test(args, hw, manager, robot, perception):
     selected = perception.select(color, grasps)
     if selected is None:
         raise RuntimeError("First selector produced no grasp")
-    print("[流程] 执行抓取")
-    execute_grasp(manager, robot, hw, selected, args.arrival_timeout)
-    robot.disable_safe_stop()  # The configured final HOME was already verified.
-    print("[成功] 抓取流程完成")
+    print("[流程] Reach 精度测试")
+    test_reach(manager, robot, hw, selected, args.arrival_timeout)
+    robot.disable_safe_stop()
+    print("[成功] Reach 测试完成")
 
 
 def main():

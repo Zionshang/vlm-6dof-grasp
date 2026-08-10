@@ -36,9 +36,11 @@ class HardwareConfig:
         # ---- camera ----
         cam = c["camera"]
         self.camera_kind = cam.get("kind", "d405")
-        self.camera_matrix = np.array(cam["intrinsic"], dtype=float)
-        self.dist_coeffs = np.array(cam["dist_coeffs"], dtype=float)
-        self.factor_depth = cam["factor_depth"]
+        intrinsic = cam.get("intrinsic")
+        distortion = cam.get("dist_coeffs")
+        self.camera_matrix = None if intrinsic is None else np.array(intrinsic, dtype=float)
+        self.dist_coeffs = None if distortion is None else np.array(distortion, dtype=float)
+        self.factor_depth = cam.get("factor_depth")
 
         # ---- hand eye(相机 -> 末端)----
         he = c["hand_eye"]
@@ -73,10 +75,11 @@ class HardwareConfig:
         self.grasp_policy = c.get("grasp_policy")
 
         # ---- lcm ----
-        self.lcm_task_url = c["lcm"]["task_url"]
-        self.lcm_cmd_channel = c["lcm"]["cmd_channel"]
-        self.lcm_callback_channel = c["lcm"]["callback_channel"]
-        arm_lcm = c["lcm"]["arm"]
+        lcm_cfg = c.get("lcm") or {}
+        self.lcm_task_url = lcm_cfg.get("task_url")
+        self.lcm_cmd_channel = lcm_cfg.get("cmd_channel")
+        self.lcm_callback_channel = lcm_cfg.get("callback_channel")
+        arm_lcm = lcm_cfg.get("arm") or {}
         self.lcm_arm_url = arm_lcm.get("url")
         self.lcm_arm_address = arm_lcm.get("address")
         self.lcm_arm_port = arm_lcm.get("port")

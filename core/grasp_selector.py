@@ -1,10 +1,4 @@
-"""抓取选择模块。
-
-包含两部分:
-  1) 3D 抓取 -> 2D 投影渲染(原 economic_grasp/utils/vlm_utils.py,逻辑原样迁入);
-  2) VLMSelector:把"渲染 -> VLM 选择 -> 最佳 id"封装成一步
-     (逻辑原样来自 run_grasp_lcm / run_realtime 的选择段)。
-"""
+"""O3D 同源 2D 抓取投影与可插拔选择器。"""
 import numpy as np
 import cv2
 from typing import Protocol
@@ -12,9 +6,7 @@ from typing import Protocol
 from saver import save_reject, save_2d_grasp
 
 
-# =============================================================================
-# 3D 抓取 -> 2D 投影渲染(原 economic_grasp/utils/vlm_utils.py,原样保留)
-# =============================================================================
+O3D_FINGER_BACK = -0.024  # -(depth_base 0.020 + finger_width 0.004)
 
 def _compress_image(image, max_dim=480):
     h, w = image.shape[:2]
@@ -22,38 +14,31 @@ def _compress_image(image, max_dim=480):
     scale = max_dim / max(h, w)
     return cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-def project_grasp_to_2d(trans, rot, width, intrinsic, depth=0.04):
-    """将 EconomicGrasp 的原始抓取位姿投影到 2D 图像。"""
-
+def project_grasp_to_2d(trans, rot, width, depth, intrinsic):
+    """按 O3D 夹爪局部几何投影开口内边中线。"""
     hw = width / 2
-    d = depth
-
-    # 定义关键点 (在抓取局部坐标系下)
-    # 用同一抓取原点绘制 2D 指尖(X=0)和指根(X=-d)。
     points_g = np.array([
-        [0,   -hw, 0],  # 0: 左指尖 (Tip)
-        [-d,  -hw, 0],  # 1: 左指根 (Base)
-        [-d,   hw, 0],  # 2: 右指根 (Base) (在此处绘制蓝点)
-        [0,    hw, 0],  # 3: 右指尖 (Tip)
-    ]).T # (3, 4)
+        [depth,          -hw, 0],
+        [O3D_FINGER_BACK, -hw, 0],
+        [O3D_FINGER_BACK,  hw, 0],
+        [depth,           hw, 0],
+        [0,                0, 0],  # EconomicGrasp translation
+    ]).T
 
-    points_c = rot @ points_g + np.asarray(trans).reshape(3, 1) # (3, 4)
+    points_c = rot @ points_g + np.asarray(trans).reshape(3, 1)
 
     # 投影到像素坐标
     fx, fy = intrinsic[0, 0], intrinsic[1, 1]
     cx, cy = intrinsic[0, 2], intrinsic[1, 2]
 
-    Z = points_c[2, :]
+    Z = np.where(np.abs(points_c[2, :]) < 1e-6, 1e-6, points_c[2, :])
     X = points_c[0, :]
     Y = points_c[1, :]
-
-    # 避免除以零
-    Z[Z==0] = 0.001
 
     U = (fx * X / Z) + cx
     V = (fy * Y / Z) + cy
 
-    return np.stack([U, V], axis=1).astype(int)
+    return np.rint(np.stack([U, V], axis=1)).astype(int)
 
 def _draw_id_label(vis_img, pts, valid_idx):
     min_x, min_y = np.min(pts, axis=0)
@@ -85,7 +70,8 @@ def _draw_id_label(vis_img, pts, valid_idx):
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
 
 
-def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, output_dir="output"):
+def vlm_grasp_visualize_batch(image, trans, rot, width, depths, intrinsic,
+                              top_k=8, output_dir="output"):
     """
     生成【多张】独立的图像，每张图只包含一个抓取候选。
     彻底解决重叠问题。
@@ -99,11 +85,16 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
     trans = np.array(trans)
     rot = np.array(rot)
     width = np.array(width)
+    depths = np.array(depths)
 
     if trans.ndim == 1: trans = trans[np.newaxis, :]
     if rot.ndim == 2:   rot = rot[np.newaxis, ...]
     if width.ndim == 0: width = width[np.newaxis]
+    if depths.ndim == 0: depths = depths[np.newaxis]
 
+    lengths = {len(trans), len(rot), len(width), len(depths)}
+    if len(lengths) != 1:
+        raise ValueError("Grasp translation/rotation/width/depth counts differ")
     num_grasps = min(len(trans), top_k)
 
     vis_images = []
@@ -119,8 +110,9 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
         t = trans[i]
         r = rot[i]
         w = width[i]
+        d = depths[i]
 
-        pts = project_grasp_to_2d(t, r, w, intrinsic)
+        pts = project_grasp_to_2d(t, r, w, d, intrinsic)
 
         if t[2] <= 0: continue
 
@@ -144,20 +136,22 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
             angle_deg = np.degrees(np.arccos(cos_theta))
             if angle_deg > 90: angle_deg = 180 - angle_deg
 
-        print(f"[Debug G{i}] Width={width_px:.1f}px | dPos=({dx}, {dy}) | Angle={angle_deg:.1f} deg")
+        print(f"[Debug G{i}] Width={width_px:.1f}px | Depth={d:.3f}m | "
+              f"dPos=({dx}, {dy}) | Angle={angle_deg:.1f} deg")
 
         # --- 无论好坏，先画出几何结构 (Review用) ---
-        color_finger = (255, 0, 0) # Red
-        color_base = (0, 255, 0)   # Green
+        color_finger = (255, 0, 0) # Blue (BGR)
+        color_base = (0, 255, 0)   # Green (BGR)
         thick = 3
         cv2.line(vis_img, tuple(pts[0]), tuple(pts[1]), color_finger, thick)
         cv2.line(vis_img, tuple(pts[1]), tuple(pts[2]), color_base, thick)
         cv2.line(vis_img, tuple(pts[2]), tuple(pts[3]), color_finger, thick)
         cv2.circle(vis_img, tuple(pts[2]), 8, (0, 0, 255), -1)
         cv2.arrowedLine(vis_img, tuple(center_base), tuple(center_tip), (0, 0, 255), 3, tipLength=0.35)
+        cv2.circle(vis_img, tuple(pts[4]), 5, (0, 255, 255), -1)
 
         if best_candidate_backup is None:
-            best_candidate_backup = (vis_img.copy(), pts, t, r, w, i)
+            best_candidate_backup = (vis_img.copy(), pts, t, r, w, d, i)
 
         # --- 统一筛选 ---
         cond_width = width_px < 55
@@ -192,6 +186,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
             "source_index": i,
             "pose_matrix": pose_mat.tolist(),
             "width": float(w),
+            "depth": float(d),
             "translation": t.tolist(),
             "rotation": r.tolist()
         })
@@ -200,7 +195,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
     # [Added] 兜底逻辑：如果没有任何候选通过筛选，强制保留第一个
     if not candidates and best_candidate_backup is not None:
         print("[Warn] All candidates rejected. Force keeping the ID:0 candidate.")
-        vis_img, pts, t, r, w, source_index = best_candidate_backup
+        vis_img, pts, t, r, w, d, source_index = best_candidate_backup
 
         # 重新绘制 Label (Hardcoded ID: 0)
         _draw_id_label(vis_img, pts, 0)
@@ -215,6 +210,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, intrinsic, top_k=8, outp
             "source_index": source_index,
             "pose_matrix": pose_mat.tolist(),
             "width": float(w),
+            "depth": float(d),
             "translation": t.tolist(),
             "rotation": r.tolist()
         })
@@ -231,9 +227,9 @@ class GraspSelector(Protocol):
 
     实现例:VLMSelector(VLM 视觉二次选优)、FirstGraspSelector(跳过 VLM,取筛选后首个)。
     """
-    def select(self, color, trans_list, rot_list, width_list, intrinsic,
+    def select(self, color, trans_list, rot_list, width_list, depth_list, intrinsic,
                top_k=8, output_dir="output"):
-        """返回 (best_idx, candidates)。candidates[i] 含 translation/rotation/width。"""
+        """返回 (best_idx, candidates)，候选保留 pose/width/depth。"""
         ...
 
 
@@ -244,7 +240,7 @@ class VLMSelector:
         from vlm.src.apps.grasp_selection import GraspSelectionApp
         self.app = GraspSelectionApp(model_name=model_name, prompts_dir=prompts_dir)
 
-    def select(self, color, trans_list, rot_list, width_list, intrinsic,
+    def select(self, color, trans_list, rot_list, width_list, depth_list, intrinsic,
                top_k=8, output_dir="output"):
         """
         3D 抓取 -> 2D 渲染 -> VLM 选择。
@@ -252,7 +248,8 @@ class VLMSelector:
         渲染的 reject 图与 2D grasp 候选图都落在 output_dir 下(vlm/、2D_grasp/)。
         """
         imgs, candidates = vlm_grasp_visualize_batch(
-            color, trans_list, rot_list, width_list, intrinsic, top_k=top_k, output_dir=output_dir
+            color, trans_list, rot_list, width_list, depth_list, intrinsic,
+            top_k=top_k, output_dir=output_dir,
         )
         img_paths = save_2d_grasp(output_dir, imgs)
 
@@ -267,10 +264,11 @@ class VLMSelector:
 class FirstGraspSelector:
     """不做 VLM 二次选择:复用几何筛选生成候选,直接取首个。实现 GraspSelector。"""
 
-    def select(self, color, trans_list, rot_list, width_list, intrinsic,
+    def select(self, color, trans_list, rot_list, width_list, depth_list, intrinsic,
                top_k=8, output_dir="output"):
         imgs, candidates = vlm_grasp_visualize_batch(
-            color, trans_list, rot_list, width_list, intrinsic, top_k=top_k, output_dir=output_dir
+            color, trans_list, rot_list, width_list, depth_list, intrinsic,
+            top_k=top_k, output_dir=output_dir,
         )
         save_2d_grasp(output_dir, imgs)
         paths = save_2d_grasp(output_dir, imgs[:1], subdir="first_select")

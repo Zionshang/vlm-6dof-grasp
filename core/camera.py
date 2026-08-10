@@ -135,14 +135,11 @@ class RealSenseD435iStereo:
 
     def get_stereo_frames(self):
         """返回 (color_rgb, ir1, ir2)。IR 归一化 uint8;color rgb8 直接 RGB。"""
-        try:
-            frames = self.pipeline.wait_for_frames(timeout_ms=1000)
-            color = np.asanyarray(frames.get_color_frame().get_data())  # rgb8 → RGB
-            ir1 = np.asanyarray(frames.get_infrared_frame(1).get_data())
-            ir2 = np.asanyarray(frames.get_infrared_frame(2).get_data())
-            return color, _ir_to_uint8(ir1), _ir_to_uint8(ir2)
-        except Exception:
-            return None, None, None
+        frames = self.pipeline.wait_for_frames(timeout_ms=1000)
+        color = np.asanyarray(frames.get_color_frame().get_data())  # rgb8 → RGB
+        ir1 = np.asanyarray(frames.get_infrared_frame(1).get_data())
+        ir2 = np.asanyarray(frames.get_infrared_frame(2).get_data())
+        return color, _ir_to_uint8(ir1), _ir_to_uint8(ir2)
 
     def release(self):
         self.pipeline.stop()

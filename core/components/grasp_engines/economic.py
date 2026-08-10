@@ -20,13 +20,17 @@ def build_economic_grasp(cfg=None, hw=None, ctx=None, dependencies=None):
         K = np.array([[cam.color_fx, 0, cam.color_cx],
                       [0, cam.color_fy, cam.color_cy],
                       [0, 0, 1.0]])
-    else:
+    elif hw is not None and hw.camera_matrix is not None:
         K = hw.camera_matrix
+    else:
+        raise ValueError("EconomicGrasp requires runtime or configured camera intrinsics")
 
     depth = dependencies["depth"]
     factor = getattr(depth, "factor_depth", None)
     if factor is None:
-        factor = hw.factor_depth if hw is not None else 1000
+        factor = hw.factor_depth if hw is not None else None
+    if factor is None:
+        raise ValueError("EconomicGrasp depth component must declare factor_depth")
 
     return EconomicGraspInference(
         str(ROOT / gcfg.get("checkpoint", "economic_grasp/checkpoint/economicgrasp_epoch10.tar")),
