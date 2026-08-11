@@ -3,7 +3,7 @@
 
 作用:
     在任意子目录的脚本/模块顶部 ``import paths`` 之后,项目根目录及各子模块目录
-    (core / vlm / economic_grasp) 会被自动加入 ``sys.path``,从而保证跨目录的
+    (core / third_party 及第三方源码根) 会被自动加入 ``sys.path``,从而保证跨目录的
     import 始终可用,无需每个脚本各自维护 sys.path。
 
 用法:
@@ -22,15 +22,18 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 # 需要注册进 sys.path 的目录清单:
-#   - 项目根:          供 fastsam 等顶层包以及 paths 自身被 import
-#   - core/:           自研核心库(pipeline / transform / camera)
-#   - vlm/:            VLM 子模块,供 ``from vlm.src.... import ...``
-#   - economic_grasp/: EconomicGrasp 子模块,供 ``from economic_grasp.... import ...``
+#   - 项目根:                    供 paths 和项目模块被 import
+#   - core/:                     自研核心库
+#   - third_party/:              供 fastsam/economic_grasp/vlm 包被 import
+#   - third_party/vlm/:          兼容 VLM 内部 ``from src...`` 导入
+#   - third_party/economic_grasp/: 兼容 EconomicGrasp 内部 ``from models/utils...`` 导入
+THIRD_PARTY_ROOT = PROJECT_ROOT / "third_party"
 _PATH_ENTRIES = [
     PROJECT_ROOT,
     PROJECT_ROOT / "core",
-    PROJECT_ROOT / "vlm",
-    PROJECT_ROOT / "economic_grasp",
+    THIRD_PARTY_ROOT,
+    THIRD_PARTY_ROOT / "vlm",
+    THIRD_PARTY_ROOT / "economic_grasp",
 ]
 
 for _entry in _PATH_ENTRIES:
@@ -39,8 +42,8 @@ for _entry in _PATH_ENTRIES:
         sys.path.insert(0, _entry_str)
 
 # 清自研代码 __pycache__,确保每次启动跑最新 .py(避免旧缓存版本/旧数据)
-# 只清 core/apps/perception;外部库(economic_grasp/vlm/fastsam 等)不清,免得重编译慢
+# 只清 core/apps;third_party 不清,免得重编译慢
 import shutil
-for _sub in ("core", "apps", "perception"):
+for _sub in ("core", "apps"):
     for _d in (PROJECT_ROOT / _sub).rglob("__pycache__"):
         shutil.rmtree(_d, ignore_errors=True)

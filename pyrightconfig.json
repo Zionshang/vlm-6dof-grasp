@@ -4,7 +4,8 @@
     // 项目根默认已包含,无需列 "core" 之外的顶层目录
     "extraPaths": [
         "core",
-        "vlm",
-        "economic_grasp"
+        "third_party",
+        "third_party/vlm",
+        "third_party/economic_grasp"
     ]
 }

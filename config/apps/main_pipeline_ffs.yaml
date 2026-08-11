@@ -8,13 +8,13 @@ components:
     discard_frames: 5
   depth:
     backend: ffs
-    model: Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth
+    model: third_party/Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth
     scale: 0.5
     valid_iters: 4
     max_disp: 192
   grasp_engine:
     backend: economic
-    checkpoint: economic_grasp/checkpoint/economicgrasp_epoch10.tar
+    checkpoint: third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar
     use_collision: true
   visualizer:
     backend: o3d

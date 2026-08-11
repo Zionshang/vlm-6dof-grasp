@@ -1,5 +1,11 @@
-# Far locate -> close observe -> generate/visualize/select -> approach/reach test.
+# Far locate -> close observe -> generate/visualize/select -> full grasp.
 components:
+  dashboard:
+    backend: web
+    host: 127.0.0.1
+    port: 8765
+    open_browser: true
+    max_points: 12000
   robot:
     backend: piper_lcm
   camera:
@@ -10,7 +16,7 @@ components:
     discard_frames: 5
   depth:
     backend: ffs
-    model: Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth
+    model: third_party/Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth
     scale: 0.5
     valid_iters: 4
     max_disp: 192
@@ -21,12 +27,11 @@ components:
     num_ctx: 4096
     keep_alive: 0
   segmenter:
-    backend: fastsam
-    weights: fastsam/weight/FastSAM-s.pt
-    use_sam: true
+    backend: efficient_sam
+    weights: third_party/EfficientSAM/weights/efficient_sam_vitt.pt
   grasp_engine:
     backend: economic
-    checkpoint: economic_grasp/checkpoint/economicgrasp_epoch10.tar
+    checkpoint: third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar
     use_collision: true
   selector:
     backend: first
@@ -46,6 +51,6 @@ components:
 
 pipeline:
   predict_topk: 100
-  selector_topk: 8
+  selector_topk: 12
   filter_orientation: true
   save_debug: true

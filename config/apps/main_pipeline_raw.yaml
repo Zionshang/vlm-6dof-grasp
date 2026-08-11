@@ -10,7 +10,7 @@ components:
     backend: raw
   grasp_engine:
     backend: economic
-    checkpoint: economic_grasp/checkpoint/economicgrasp_epoch10.tar
+    checkpoint: third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar
     use_collision: true
   visualizer:
     backend: o3d

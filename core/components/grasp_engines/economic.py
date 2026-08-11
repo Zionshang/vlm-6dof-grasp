@@ -33,7 +33,7 @@ def build_economic_grasp(cfg=None, hw=None, ctx=None, dependencies=None):
         raise ValueError("EconomicGrasp depth component must declare factor_depth")
 
     return EconomicGraspInference(
-        str(ROOT / gcfg.get("checkpoint", "economic_grasp/checkpoint/economicgrasp_epoch10.tar")),
+        str(ROOT / gcfg.get("checkpoint", "third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar")),
         intrinsic=K, factor_depth=float(factor),
         use_collision=gcfg.get("use_collision", True),
     )

@@ -20,7 +20,7 @@ def _boot_ffs_env(root):
     global _FFS_BOOTED
     if _FFS_BOOTED:
         return
-    ffs_dir = str((root / "Fast-FoundationStereo").resolve())
+    ffs_dir = str((root / "third_party/Fast-FoundationStereo").resolve())
     if ffs_dir not in sys.path:
         sys.path.insert(0, ffs_dir)
     if not os.environ.get("CC"):
@@ -73,7 +73,7 @@ def build_ffs_depth(cfg=None, hw=None, ctx=None, dependencies=None):
 
     fcfg = cfg or {}
     cam = dependencies["camera"]
-    model_dir = str(ROOT / fcfg.get("model", "Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth"))
+    model_dir = str(ROOT / fcfg.get("model", "third_party/Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth"))
     scale = float(fcfg.get("scale", 0.5))
     valid_iters = int(fcfg.get("valid_iters", 4))
     max_disp = int(fcfg.get("max_disp", 192))

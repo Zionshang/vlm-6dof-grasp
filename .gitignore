@@ -80,16 +80,16 @@ secrets.yaml
 
 output
 logs
-economic_grasp/results
+third_party/economic_grasp/results
 runs
 
 # --- checkpoint ---
-economic_grasp/checkpoint/economicgrasp_epoch10.tar
-economic_grasp/checkpoint/
+third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar
+third_party/economic_grasp/checkpoint/
 
 # --- LCM 临时文件 ---
 lcm_Transport/
 Paper
-vlm/prompts/new_grasp_selection.yaml
+third_party/vlm/prompts/new_grasp_selection.yaml
 run_grasp_camera.py
 experiment_result

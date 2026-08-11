@@ -15,6 +15,7 @@ _ROLE_MODULES = {
     "selector": "selectors",
     "executor": "executors",
     "visualizer": "visualizers",
+    "dashboard": "dashboards",
     "robot": "robots",
 }
 
@@ -103,10 +104,13 @@ class GraspManager:
         """Return an already built component without triggering construction."""
         return self.components.get(role, default)
 
-    def initialize(self):
+    def initialize(self, roles=None):
         """Preflight lightweight backends, then eagerly build non-lazy roles."""
+        specs = self.specs if roles is None else {
+            role: self.specs[role] for role in roles
+        }
         preflight_roles = []
-        for role, spec in self.specs.items():
+        for role, spec in specs.items():
             if not spec or not spec.get("backend"):
                 continue
             item = self._load_backend(role, spec["backend"])
@@ -119,7 +123,7 @@ class GraspManager:
             if callable(prepare):
                 prepare()
 
-        for role, spec in self.specs.items():
+        for role, spec in specs.items():
             if spec and spec.get("backend") and not spec.get("lazy", False):
                 self.require(role)
         return self

@@ -11,11 +11,11 @@ components:
     model: qwen3-vl:8b-instruct-q4_K_M
   segmenter:
     backend: fastsam
-    weights: fastsam/weight/FastSAM-s.pt
+    weights: third_party/fastsam/weight/FastSAM-s.pt
     use_sam: true
   grasp_engine:
     backend: economic
-    checkpoint: economic_grasp/checkpoint/economicgrasp_epoch10.tar
+    checkpoint: third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar
     use_collision: true
   selector:
     backend: vlm

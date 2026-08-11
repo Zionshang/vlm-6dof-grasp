@@ -19,7 +19,7 @@ RuntimeError: GET was unable to find an engine to execute this computation
 对于某些难以检测或几何特征不明显的物体，所有点可能都会被这两个 Mask 过滤掉。当有效点数为 0 时，后续的 `furthest_point_sample` (最远点采样) 会产生无效索引或空张量，导致传递给后续卷积层的 Input Shape 非法，从而触发 CUDA 引擎错误。
 
 ## 临时方案 (Workaround)
-代码中（`economic_grasp/models/economicgrasp.py`）已加入防崩溃逻辑：
+代码中（`third_party/economic_grasp/models/economicgrasp.py`）已加入防崩溃逻辑：
 - 当检测到有效点数为 0 时，强制回退使用原始点云的前 N 个点或随机点进行填充。
 - **注意**：这只是为了防止程序崩溃。此时生成的抓取结果是基于随机/未筛选点的，**质量可能极不可靠**。
 

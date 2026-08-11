@@ -6,8 +6,7 @@ update_cloud(color, depth_m)/update_grasps(gg)/poll()/render() 由 Handler 在�
 import numpy as np
 import open3d as o3d
 from registry import register
-
-DEPTH_MAX_M = 3.0   # 与原 main_pipeline 的 make_point_cloud DEPTH_MAX_MM(3000mm)一致
+from visualization_data import grasp_geometries, point_cloud_arrays
 
 
 @register("visualizer", "o3d", requires=("camera",))
@@ -22,16 +21,10 @@ def build_o3d_visualizer(cfg=None, hw=None, ctx=None, dependencies=None):
 
     class O3DVisualizer:
         def update_cloud(self, color, depth_m):
-            fx, fy = camera.color_fx, camera.color_fy
-            cx, cy = camera.color_cx, camera.color_cy
-            H, W = depth_m.shape
-            u, v = np.meshgrid(np.arange(W), np.arange(H))
-            valid = (depth_m > 0) & (depth_m < DEPTH_MAX_M)
-            z = depth_m
-            x = (u - cx) * z / fx
-            y = (v - cy) * z / fy
-            pts = np.stack([x, y, z], -1)[valid].astype(np.float64)
-            cols = color[valid].astype(np.float64) / 255.0
+            intrinsic = np.array([[camera.color_fx, 0, camera.color_cx],
+                                  [0, camera.color_fy, camera.color_cy],
+                                  [0, 0, 1.0]])
+            pts, cols = point_cloud_arrays(color, depth_m, intrinsic)
             if len(pts):
                 pcd.points = o3d.utility.Vector3dVector(pts)
                 pcd.colors = o3d.utility.Vector3dVector(cols)
@@ -45,13 +38,9 @@ def build_o3d_visualizer(cfg=None, hw=None, ctx=None, dependencies=None):
             nonlocal grasp_geoms
             for g in grasp_geoms:
                 vis.remove_geometry(g, reset_bounding_box=False)
-            grasp_geoms = []
-            if gg is not None and len(gg) > 0:
-                for i in range(len(gg)):
-                    g = gg[i].to_open3d_geometry(color=(0, 0, 0))
-                    grasp_geoms.extend(g if isinstance(g, list) else [g])
-                for g in grasp_geoms:
-                    vis.add_geometry(g, reset_bounding_box=False)
+            grasp_geoms = grasp_geometries(gg)
+            for geometry in grasp_geoms:
+                vis.add_geometry(geometry, reset_bounding_box=False)
 
         def poll(self):
             return vis.poll_events()

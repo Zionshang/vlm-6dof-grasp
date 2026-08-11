@@ -1,1 +1,1 @@
-from . import fastsam   # noqa: F401
+from . import efficient_sam, fastsam  # noqa: F401

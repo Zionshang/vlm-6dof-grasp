@@ -79,7 +79,7 @@ class RealSenseD435i:
 def _ir_to_uint8(img):
     """IR 帧(uint8/uint16)归一化到 uint8 灰度,供 FFS 网络输入。
 
-    参考 Fast-FoundationStereo/scripts/run_realsense_demo.py:ir_to_uint8。
+    参考 third_party/Fast-FoundationStereo/scripts/run_realsense_demo.py:ir_to_uint8。
     """
     if img.dtype == np.uint8:
         return img
@@ -101,7 +101,7 @@ class RealSenseD435iStereo:
 
     start 时缓存 color / left-IR 内参、IR→color 外参、stereo baseline,供 FFS 深度计算
     (depth = ir_fx*scale*baseline/disp)与「IR 深度→彩色对齐」使用。IR 流不做 align
-    (FFS 需要 raw 立体对)。参考 Fast-FoundationStereo/scripts/run_realsense_demo.py。
+    (FFS 需要 raw 立体对)。参考 third_party/Fast-FoundationStereo/scripts/run_realsense_demo.py。
     """
 
     def __init__(self, width=640, height=480, fps=30, device_name="D435i"):
