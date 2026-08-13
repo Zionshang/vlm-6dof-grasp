@@ -41,7 +41,7 @@ components:
     steps:
       - {name: approach, gripper: max, offset: [-0.06, 0.0, 0.05]}
       - {name: reach, gripper: max}
-      - {name: grasp, gripper: target, wait: 2.0}
+      - {name: grasp, gripper: target, wait: 1.0}
       - {name: lift, gripper: target, offset: [0.0, 0.0, 0.08]}
       - {name: home, gripper: target, use_home_pose: true}
   visualizer:

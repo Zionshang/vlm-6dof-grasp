@@ -13,7 +13,7 @@ from visualization_data import grasp_geometries, point_cloud_arrays
 
 
 _FLOW_PREFIXES = (
-    "[流程]", "[发送]", "[到达]", "[就绪]", "[失败]", "[成功]", "[测试]",
+    "[任务]", "[流程]", "[发送]", "[到达]", "[就绪]", "[失败]", "[成功]", "[测试]",
     "[Safety]", "[Config]",
 )
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -31,7 +31,10 @@ class _LogWriter:
         self.buffer += text
         while "\n" in self.buffer:
             line, self.buffer = self.buffer.split("\n", 1)
-            self.dashboard.log(line, self.channel)
+            try:
+                self.dashboard.log(line, self.channel)
+            except Exception:
+                pass
         return len(text)
 
     def flush(self):
@@ -50,12 +53,17 @@ class WebDashboard:
         self.started_at = time.time() - 1.0
         self._lock = threading.Lock()
         self._logs = {"flow": [], "detail": []}
+        self._task = {}
         self._scene, self._scene_version = {}, 0
         self._server = None
         self.start()
 
     def set_output_dir(self, output_dir):
         self.output_dir = Path(output_dir).resolve()
+
+    def set_task(self, name, target):
+        with self._lock:
+            self._task = {"name": name, "target": target}
 
     def start(self):
         if self._server is not None:
@@ -77,7 +85,8 @@ class WebDashboard:
         @app.get("/api/status")
         def status():
             with self._lock:
-                payload = {**self._logs, "scene_version": self._scene_version}
+                payload = {**self._logs, "task": self._task,
+                           "scene_version": self._scene_version}
             payload["images"] = self._images()
             return jsonify(payload)
 
@@ -115,20 +124,26 @@ class WebDashboard:
             return
         channel = channel or ("flow" if line.startswith(_FLOW_PREFIXES) else "detail")
         with self._lock:
-            self._logs[channel].append(line)
-            self._logs[channel] = self._logs[channel][-2000:]
+            self._logs["flow"] = (self._logs["flow"] + [line])[-2000:]
+            if channel == "detail":
+                self._logs["detail"] = (self._logs["detail"] + [line])[-2000:]
 
     @contextmanager
     def _capture(self, channel, echo):
-        with redirect_stdout(_LogWriter(self, sys.stdout, channel, echo)), \
-                redirect_stderr(_LogWriter(self, sys.stderr, "detail", echo)):
+        stdout, stderr = sys.stdout, sys.stderr
+        while isinstance(stdout, _LogWriter):
+            stdout = stdout.original
+        while isinstance(stderr, _LogWriter):
+            stderr = stderr.original
+        with redirect_stdout(_LogWriter(self, stdout, channel, echo)), \
+                redirect_stderr(_LogWriter(self, stderr, "detail", echo)):
             yield
 
     def capture_output(self):
         return self._capture(None, True)
 
     def details(self):
-        return self._capture("detail", False)
+        return self._capture("detail", True)
 
     def update_scene(self, color, depth, grasps, intrinsic):
         points, colors = point_cloud_arrays(
@@ -184,20 +199,22 @@ _HTML = r"""<!doctype html>
 <style>
 :root{color-scheme:dark;--bg:#0b1017;--panel:#131b25;--line:#263443;--text:#dce7f2;--accent:#38bdf8}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,sans-serif}
-header{height:50px;padding:13px 18px;border-bottom:1px solid var(--line);font-weight:700;color:var(--accent)}
-main{display:grid;grid-template-rows:32vh 1fr;gap:10px;padding:10px;height:calc(100vh - 50px)}
+header{height:58px;padding:10px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;font-weight:700;color:var(--accent)}
+.task{display:flex;gap:8px;margin-left:auto}.badge{padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)}
+main{display:grid;grid-template-rows:32vh 1fr;gap:10px;padding:10px;height:calc(100vh - 58px)}
 .logs,.lower{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;min-height:0;overflow:hidden}
 .title{padding:8px 11px;border-bottom:1px solid var(--line);font-weight:650}.terminal{height:calc(100% - 36px);padding:10px;overflow:auto;white-space:pre-wrap;font:13px/1.5 ui-monospace,monospace;color:#b9f6ca}
 #detail{color:#c8d5e3}.images{height:calc(100% - 36px);overflow:auto;padding:8px}.group{margin:4px 0 12px}.group h3{font-size:12px;color:#8fcde8;margin:5px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:8px}.card{background:#0b1119;border:1px solid var(--line);padding:5px;border-radius:6px}.card img{width:100%;height:360px;object-fit:contain}.card div{font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #scene{width:100%;height:calc(100% - 36px)}@media(max-width:900px){main{height:auto;grid-template-rows:auto auto}.logs,.lower{grid-template-columns:1fr}.panel{height:42vh}}
-</style></head><body><header>Piper D405 · FFS · EconomicGrasp Monitor</header><main>
+</style></head><body><header>Piper D405 · FFS · EconomicGrasp Monitor<div id="task" class="task"></div></header><main>
 <section class="logs"><div class="panel"><div class="title">总流程</div><div id="flow" class="terminal"></div></div><div class="panel"><div class="title">组件与筛选细节</div><div id="detail" class="terminal"></div></div></section>
 <section class="lower"><div class="panel"><div class="title">O3D 同源点云与抓取姿态</div><div id="scene"></div></div><div class="panel"><div class="title">本次运行图像</div><div id="images" class="images"></div></div></section>
 </main><script>
 let sceneVersion=-1;
 const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function terminal(id,lines){const el=document.getElementById(id),bottom=el.scrollTop+el.clientHeight>=el.scrollHeight-20;el.textContent=lines.join('\n');if(bottom)el.scrollTop=el.scrollHeight}
+function renderTask(t){document.getElementById('task').innerHTML=t?.name?`<span class="badge">任务：${esc(t.name)}</span><span class="badge">目标：${esc(t.target)}</span>`:''}
 function renderImages(items){const groups={};items.forEach(x=>(groups[x.group]??=[]).push(x));document.getElementById('images').innerHTML=Object.entries(groups).map(([g,xs])=>`<div class="group"><h3>${esc(g)}</h3><div class="grid">${xs.map(x=>`<div class="card"><img loading="lazy" src="/files/${x.path.split('/').map(encodeURIComponent).join('/')}?v=${x.mtime}"><div title="${esc(x.path)}">${esc(x.path)}</div></div>`).join('')}</div></div>`).join('')}
 async function renderScene(){const s=await (await fetch('/api/scene')).json(),traces=[];if(s.points?.length){traces.push({type:'scatter3d',mode:'markers',x:s.points.map(p=>p[0]),y:s.points.map(p=>p[1]),z:s.points.map(p=>p[2]),marker:{size:1.5,color:s.colors},name:'RGB-D'})}for(const m of s.meshes||[]){traces.push({type:'mesh3d',x:m.vertices.map(p=>p[0]),y:m.vertices.map(p=>p[1]),z:m.vertices.map(p=>p[2]),i:m.triangles.map(t=>t[0]),j:m.triangles.map(t=>t[1]),k:m.triangles.map(t=>t[2]),color:'#111827',flatshading:true,showscale:false,name:'grasp'})}Plotly.react('scene',traces,{margin:{l:0,r:0,t:0,b:0},paper_bgcolor:'#131b25',plot_bgcolor:'#131b25',font:{color:'#dce7f2'},scene:{aspectmode:'data',xaxis:{title:'X'},yaxis:{title:'Y'},zaxis:{title:'Z'},camera:{up:{x:0,y:-1,z:0}}}},{responsive:true,displaylogo:false})}
-async function poll(){try{const s=await (await fetch('/api/status')).json();terminal('flow',s.flow);terminal('detail',s.detail);renderImages(s.images);if(s.scene_version!==sceneVersion){sceneVersion=s.scene_version;await renderScene()}}catch(e){}setTimeout(poll,700)}poll();
+async function poll(){try{const s=await (await fetch('/api/status')).json();renderTask(s.task);terminal('flow',s.flow);terminal('detail',s.detail);renderImages(s.images);if(s.scene_version!==sceneVersion){sceneVersion=s.scene_version;await renderScene()}}catch(e){}setTimeout(poll,250)}poll();
 </script></body></html>"""

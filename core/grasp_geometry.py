@@ -46,7 +46,7 @@ def box_center_to_base(depth, box, intrinsic, ee_pose, hand_eye_r,
 
 def filter_grasps_by_orientation(grasps, keep_topk, max_x_deg=50, max_y_deg=100):
     """Filter a score-ordered GraspGroup by approach and closing axes."""
-    keep = []
+    total, keep = len(grasps), []
     for index, grasp in enumerate(grasps):
         if len(keep) >= keep_topk:
             break
@@ -55,4 +55,8 @@ def filter_grasps_by_orientation(grasps, keep_topk, max_x_deg=50, max_y_deg=100)
         angle_y = np.arccos(np.clip(rotation[:, 1] @ [1, 0, 0], -1, 1))
         if angle_x < np.deg2rad(max_x_deg) and angle_y < np.deg2rad(max_y_deg):
             keep.append(index)
-    return grasps[keep] if keep else grasps[:keep_topk]
+    result = grasps[keep] if keep else grasps[:keep_topk]
+    print(f"[3D筛选] {max_x_deg}°/{max_y_deg}°: "
+          f"输入={total}, 通过={len(keep)}, 输出={len(result)}"
+          + ("（兜底）" if not keep else ""))
+    return result

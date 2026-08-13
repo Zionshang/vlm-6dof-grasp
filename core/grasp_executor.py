@@ -39,6 +39,7 @@ class GraspExecutor:
         steps = self.steps if steps is None else steps
         if not steps:
             raise ValueError("Grasp sequence has no configured steps")
+        self.last_state = None
         for step in steps:
             if step.use_home_pose:
                 pose = np.array(self.hw.home_pose, dtype=float).copy()
@@ -56,7 +57,7 @@ class GraspExecutor:
                     )
                 else:
                     from robot_safety import move_to_pose_and_wait
-                    move_to_pose_and_wait(
+                    self.last_state = move_to_pose_and_wait(
                         self.client, self.hw, pose, grip, arrival_timeout,
                         f"Grasp {step.name}", step.gripper == "max",
                     )

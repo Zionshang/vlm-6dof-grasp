@@ -93,3 +93,31 @@ Paper
 third_party/vlm/prompts/new_grasp_selection.yaml
 run_grasp_camera.py
 experiment_result
+
+# --- 当前主线：Piper + D405 全流程抓取 ---
+# 保留：config/hardware/piper_d405.yaml
+#       config/apps/piper_run_test.yaml
+#       apps/piper_run_test.py
+
+# 其他应用与硬件组合
+config/apps/grasp_lcm.yaml
+config/apps/main_pipeline_ffs.yaml
+config/apps/main_pipeline_raw.yaml
+config/apps/realtime.yaml
+config/hardware/realsense_d435i.yaml
+config/hardware/x5_umi_d405.yaml
+apps/main_pipeline.py
+apps/run_grasp_lcm.py
+apps/run_realtime.py
+apps/handlers/
+
+# 当前 Piper 主线未使用的 FastSAM backend 源码
+third_party/fastsam/
+!third_party/fastsam/
+third_party/fastsam/*
+!third_party/fastsam/demo.py
+
+# 非 Piper 示例数据
+example_data/
+
+tests/*

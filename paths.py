@@ -40,10 +40,3 @@ for _entry in _PATH_ENTRIES:
     _entry_str = str(_entry)
     if _entry_str not in sys.path:
         sys.path.insert(0, _entry_str)
-
-# 清自研代码 __pycache__,确保每次启动跑最新 .py(避免旧缓存版本/旧数据)
-# 只清 core/apps;third_party 不清,免得重编译慢
-import shutil
-for _sub in ("core", "apps"):
-    for _d in (PROJECT_ROOT / _sub).rglob("__pycache__"):
-        shutil.rmtree(_d, ignore_errors=True)

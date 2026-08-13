@@ -4,17 +4,11 @@ from typing import Protocol, Any
 import sys
 
 
-class RobotConfig(Protocol):
-    """机械臂配置(由 client 提供,如夹爪宽度)。"""
-    gripper_width: float
-
-
 class RobotClient(Protocol):
     """机械臂接口:末端位姿控制 + 状态读取 + 复位。"""
     def set_ee_pose(self, pose, gripper_pos, preview_time) -> None: ...
     def get_state(self) -> Any: ...
     def reset_to_home(self) -> None: ...
-    def get_robot_config(self) -> RobotConfig: ...
 
 
 class SafeRobotClient:

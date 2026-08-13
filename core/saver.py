@@ -23,8 +23,18 @@ def save_image(path, img, is_rgb=True):
     """保存图片:自动创建父目录;is_rgb=True 时把 RGB 转 BGR。"""
     p = _ensure_parent(path)
     out = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if is_rgb else img
-    cv2.imwrite(str(p), out)
+    if not cv2.imwrite(str(p), out):
+        raise OSError(f"无法写入 {p}")
     return p
+
+
+def try_save(name, save, *args, **kwargs):
+    """Best-effort output; saving must never stop robot work."""
+    try:
+        return save(*args, **kwargs)
+    except Exception as exc:
+        print(f"[输出] {name}保存失败: {str(exc).splitlines()[0]}")
+        return None
 
 
 def save_mask(path, mask):

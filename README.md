@@ -1,6 +1,6 @@
 # VLM-6DoF-Grasp
 
-Config-driven 6DoF grasping with RealSense, FFS, VLM/FastSAM,
+Config-driven 6DoF grasping with RealSense, FFS, VLM and pluggable segmentation,
 EconomicGrasp and pluggable robot backends.
 
 ## Architecture
@@ -10,11 +10,11 @@ EconomicGrasp and pluggable robot backends.
 - `config/apps/`: component composition and application-level pipeline options.
 - `core/components/`: backend plugins registered by `(role, backend)`.
 - `core/manager.py`: dependency resolution, preflight and lifecycle ownership.
-- `core/grasp_perception.py`: the shared
-  detect → segment → generate → select chain.
+- `core/grasp_perception.py`: shared RGB-D capture, retry and
+  detect → segment → generate → select orchestration.
 - `third_party/`: vendored algorithm projects (`Fast-FoundationStereo`,
-  `fastsam`, `economic_grasp` and `vlm`); project adapters stay under `core/`
-  components.
+  `fastsam`, `EfficientSAM`, `economic_grasp` and `vlm`); adapters stay under
+  `core/components/`.
 - `apps/`: application workflows and event/transport entrypoints.
 
 Component factories declare dependencies in the single `core/registry.py`
@@ -40,19 +40,20 @@ resident instance before loading CUDA-heavy components.
 Piper+D405 feedback-verified grasp test:
 
 ```bash
-python apps/piper_run_test.py --prompt orange
+python apps/piper_run_test.py --prompt orange --mode grasp
 ```
 
 The test verifies ARM_STATE, returns home, starts D405+FFS, moves to the
-configured observation pose, runs VLM+FastSAM+EconomicGrasp, selects the first
+configured observation pose, runs VLM+EfficientSAM+EconomicGrasp, selects the first
 geometrically valid grasp, and executes approach → reach → grasp → lift → home.
 Every Cartesian step is feedback-verified; any failure after robot-state
-verification returns home. The retained `run_test()` function provides the
-approach/reach accuracy test when calibration is needed later.
+verification returns home. Use `--mode reach` to retain `run_test()` for
+approach/reach calibration without closing the gripper.
 
 The same command opens `http://127.0.0.1:8765` automatically. Its local web
-dashboard separates workflow and component logs, shows images produced by the
-current run, and renders an interactive point cloud with the same GraspNetAPI
+dashboard mirrors the terminal log in real time, separates component details,
+shows images produced by the current run, and renders an interactive point
+cloud with the same GraspNetAPI
 gripper geometry used by the desktop Open3D viewer. Dashboard settings live in
 `config/apps/piper_run_test.yaml` and do not participate in robot control.
 

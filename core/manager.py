@@ -27,6 +27,12 @@ class GraspManager:
     preflight are prepared before CUDA-heavy components are initialized.
     """
 
+    @classmethod
+    def from_yaml(cls, path, **kwargs):
+        import yaml
+        with open(path) as stream:
+            return cls(yaml.safe_load(stream), **kwargs)
+
     def __init__(self, app_config: dict, hw=None, initial_components=None,
                  eager=True):
         self.app_config = app_config or {}

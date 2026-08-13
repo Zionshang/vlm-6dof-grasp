@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 from typing import Protocol
 
-from saver import save_reject, save_2d_grasp
+from saver import save_reject, save_2d_grasp, try_save
 
 
 O3D_FINGER_BACK = -0.024  # -(depth_base 0.020 + finger_width 0.004)
@@ -68,6 +68,27 @@ def _draw_id_label(vis_img, pts, valid_idx):
     cv2.rectangle(vis_img, box_tl, box_br, (255, 255, 255), -1)
     cv2.putText(vis_img, label, (text_x, text_y),
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
+
+
+def _pca_choice(candidates, mask, intrinsic, round_ratio=1.3):
+    xy = np.argwhere(mask > 0)[:, ::-1].astype(float)
+    if len(xy) < 3:
+        return 0
+    values, vectors = np.linalg.eigh(np.cov(xy, rowvar=False))
+    ratio = np.sqrt(values[1] / max(values[0], 1e-9))
+    axis = np.array([1.0, 0.0]) if ratio <= round_ratio else vectors[:, 0]
+    scores = []
+    for candidate in candidates:
+        pts = project_grasp_to_2d(
+            candidate["translation"], candidate["rotation"],
+            candidate["width"], candidate["depth"], intrinsic,
+        )
+        base = pts[2] - pts[1]
+        scores.append(abs(base @ axis) / max(np.linalg.norm(base), 1e-9))
+    choice = int(np.argmax(scores))
+    shape = "圆形" if ratio <= round_ratio else "长条形"
+    print(f"[PCA] {shape} ratio={ratio:.2f}, selected ID: {choice}")
+    return choice
 
 
 def vlm_grasp_visualize_batch(image, trans, rot, width, depths, intrinsic,
@@ -170,7 +191,7 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, depths, intrinsic,
 
             # [Added] 保存被筛选掉的图片用于Debug
             cv2.putText(vis_img, f"REJECT: {fail_str}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-            save_reject(output_dir, vis_img, i)
+            try_save("筛除图", save_reject, output_dir, vis_img, i)
             continue
 
         # --- 如果通过筛选，绘制ID并添加到列表 ---
@@ -212,7 +233,8 @@ def vlm_grasp_visualize_batch(image, trans, rot, width, depths, intrinsic,
             "width": float(w),
             "depth": float(d),
             "translation": t.tolist(),
-            "rotation": r.tolist()
+            "rotation": r.tolist(),
+            "fallback_rpy": [0.0, 0.85, 0.0],
         })
 
     return vis_images, candidates
@@ -228,7 +250,7 @@ class GraspSelector(Protocol):
     实现例:VLMSelector(VLM 视觉二次选优)、FirstGraspSelector(跳过 VLM,取筛选后首个)。
     """
     def select(self, color, trans_list, rot_list, width_list, depth_list, intrinsic,
-               top_k=8, output_dir="output"):
+               top_k=8, output_dir="output", mask=None):
         """返回 (best_idx, candidates)，候选保留 pose/width/depth。"""
         ...
 
@@ -241,7 +263,7 @@ class VLMSelector:
         self.app = GraspSelectionApp(model_name=model_name, prompts_dir=prompts_dir)
 
     def select(self, color, trans_list, rot_list, width_list, depth_list, intrinsic,
-               top_k=8, output_dir="output"):
+               top_k=8, output_dir="output", mask=None):
         """
         3D 抓取 -> 2D 渲染 -> VLM 选择。
         返回 (best_idx, candidates)。candidates 含 translation/rotation/width/pose_matrix。
@@ -262,17 +284,19 @@ class VLMSelector:
 
 
 class FirstGraspSelector:
-    """不做 VLM 二次选择:复用几何筛选生成候选,直接取首个。实现 GraspSelector。"""
+    """几何淘汰后按目标 mask 的 PCA 轴选择抓取。"""
 
     def select(self, color, trans_list, rot_list, width_list, depth_list, intrinsic,
-               top_k=8, output_dir="output"):
+               top_k=8, output_dir="output", mask=None):
         imgs, candidates = vlm_grasp_visualize_batch(
             color, trans_list, rot_list, width_list, depth_list, intrinsic,
             top_k=top_k, output_dir=output_dir,
         )
-        save_2d_grasp(output_dir, imgs)
-        paths = save_2d_grasp(output_dir, imgs[:1], subdir="first_select")
+        try_save("2D抓取图", save_2d_grasp, output_dir, imgs)
+        idx = _pca_choice(candidates, mask, intrinsic) if mask is not None else 0
+        paths = try_save("first结果图", save_2d_grasp, output_dir, imgs[idx:idx + 1],
+                         subdir="first_select") or []
         if paths:
             print(f"[Select] Saved first filtered grasp: {paths[0]}")
-        print("[Select] No VLM; using first candidate (ID: 0).")
-        return 0, candidates
+        print(f"[Select] No VLM; using PCA candidate (ID: {idx}).")
+        return idx, candidates
