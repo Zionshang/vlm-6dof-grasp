@@ -239,9 +239,10 @@ def prepare_grasp(args, hw, manager, robot, perception, dashboard):
         raise RuntimeError("抓取生成无结果")
     _web(dashboard, "3D更新", lambda: dashboard.update_scene(
         color, depth, grasps, perception.grasp_engine.intrinsic))
-    print("[流程] O3D 可视化")
-    with _web_context(dashboard, True):
-        visualize(manager, color, depth, grasps, args.visualize_seconds)
+    if manager.specs.get("visualizer", {}).get("enabled", True):
+        print("[流程] O3D 可视化")
+        with _web_context(dashboard, True):
+            visualize(manager, color, depth, grasps, args.visualize_seconds)
     print("[流程] first 筛选")
     selected = perception.select(color, grasps)
     if selected is None:

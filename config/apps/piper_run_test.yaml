@@ -46,6 +46,7 @@ components:
       - {name: home, gripper: target, use_home_pose: true}
   visualizer:
     backend: o3d
+    enabled: false
     lazy: true
     title: "Piper D405 FFS Grasp Test"
 

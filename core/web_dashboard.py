@@ -188,6 +188,7 @@ class WebDashboard:
 
     def close(self):
         if self._server is not None:
+            time.sleep(1.0)  # allow the browser's final poll/file requests
             self._server.shutdown()
             self._server = None
 
@@ -214,7 +215,7 @@ let sceneVersion=-1;
 const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function terminal(id,lines){const el=document.getElementById(id),bottom=el.scrollTop+el.clientHeight>=el.scrollHeight-20;el.textContent=lines.join('\n');if(bottom)el.scrollTop=el.scrollHeight}
 function renderTask(t){document.getElementById('task').innerHTML=t?.name?`<span class="badge">任务：${esc(t.name)}</span><span class="badge">目标：${esc(t.target)}</span>`:''}
-function renderImages(items){const groups={};items.forEach(x=>(groups[x.group]??=[]).push(x));document.getElementById('images').innerHTML=Object.entries(groups).map(([g,xs])=>`<div class="group"><h3>${esc(g)}</h3><div class="grid">${xs.map(x=>`<div class="card"><img loading="lazy" src="/files/${x.path.split('/').map(encodeURIComponent).join('/')}?v=${x.mtime}"><div title="${esc(x.path)}">${esc(x.path)}</div></div>`).join('')}</div></div>`).join('')}
+function renderImages(items){const groups={};items.forEach(x=>(groups[x.group]??=[]).push(x));document.getElementById('images').innerHTML=Object.entries(groups).map(([g,xs])=>`<div class="group"><h3>${esc(g)}</h3><div class="grid">${xs.map(x=>`<div class="card"><img src="/files/${x.path.split('/').map(encodeURIComponent).join('/')}?v=${x.mtime}"><div title="${esc(x.path)}">${esc(x.path)}</div></div>`).join('')}</div></div>`).join('')}
 async function renderScene(){const s=await (await fetch('/api/scene')).json(),traces=[];if(s.points?.length){traces.push({type:'scatter3d',mode:'markers',x:s.points.map(p=>p[0]),y:s.points.map(p=>p[1]),z:s.points.map(p=>p[2]),marker:{size:1.5,color:s.colors},name:'RGB-D'})}for(const m of s.meshes||[]){traces.push({type:'mesh3d',x:m.vertices.map(p=>p[0]),y:m.vertices.map(p=>p[1]),z:m.vertices.map(p=>p[2]),i:m.triangles.map(t=>t[0]),j:m.triangles.map(t=>t[1]),k:m.triangles.map(t=>t[2]),color:'#111827',flatshading:true,showscale:false,name:'grasp'})}Plotly.react('scene',traces,{margin:{l:0,r:0,t:0,b:0},paper_bgcolor:'#131b25',plot_bgcolor:'#131b25',font:{color:'#dce7f2'},scene:{aspectmode:'data',xaxis:{title:'X'},yaxis:{title:'Y'},zaxis:{title:'Z'},camera:{up:{x:0,y:-1,z:0}}}},{responsive:true,displaylogo:false})}
 async function poll(){try{const s=await (await fetch('/api/status')).json();renderTask(s.task);terminal('flow',s.flow);terminal('detail',s.detail);renderImages(s.images);if(s.scene_version!==sceneVersion){sceneVersion=s.scene_version;await renderScene()}}catch(e){}setTimeout(poll,250)}poll();
 </script></body></html>"""
