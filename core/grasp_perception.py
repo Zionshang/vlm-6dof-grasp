@@ -64,6 +64,7 @@ class GraspPerception:
         self.selector_topk = int(cfg.get("selector_topk", 8))
         self.filter_orientation = bool(cfg.get("filter_orientation", False))
         self.save_debug = bool(cfg.get("save_debug", False))
+        self.box_scale = float(cfg.get("box_scale", 1.25))
 
     @classmethod
     def from_manager(cls, manager, output_dir):
@@ -84,7 +85,7 @@ class GraspPerception:
             try_save("检测图", save_vlm_boxes, self.output_dir, color,
                      detection.boxes, run_id, "origin_vlm")
 
-        boxes = expand_boxes(detection.boxes, color.shape)
+        boxes = expand_boxes(detection.boxes, color.shape, self.box_scale)
         if self.save_debug:
             try_save("检测图", save_vlm_boxes, self.output_dir, color,
                      boxes, run_id)

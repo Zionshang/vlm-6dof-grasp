@@ -40,11 +40,11 @@ resident instance before loading CUDA-heavy components.
 Piper+D405 feedback-verified grasp test:
 
 ```bash
-python apps/piper_run_test.py --prompt orange --mode grasp
+python apps/piper_run_test.py --target all --mode grasp
 ```
 
 The test verifies ARM_STATE, returns home, starts D405+FFS, moves to the
-configured observation pose, runs VLM+EfficientSAM+EconomicGrasp, selects the first
+configured observation pose, runs YOLO+EfficientSAM+EconomicGrasp, selects the first
 geometrically valid grasp, and executes approach → reach → grasp → lift → home.
 Every Cartesian step is feedback-verified; any failure after robot-state
 verification returns home. Use `--mode reach` to retain `run_test()` for
@@ -78,6 +78,31 @@ D435i live grasp visualization:
 python apps/main_pipeline.py --use_ffs true
 python apps/main_pipeline.py --use_ffs false
 ```
+
+D405 perception-only, key-triggered YOLO grasp visualization (no robot):
+
+```bash
+conda run --no-capture-output -n economicgrasp \
+  python apps/d405_yolo_grasp_realtime.py --target all
+```
+
+The bundled YOLO26 checkpoint detects `watermelon`, `can`, `lunch_box`, and
+`red_bag`. Pass one class name (or comma-separated names) to `--target` to
+restrict detection. The 2D window continuously shows YOLO boxes. Focus that
+window and press `1` to run FFS, EfficientSAM and EconomicGrasp once; the mask
+overlay and Open3D scene update when inference finishes. Press `Q`/`Esc`, or
+close the Open3D window, to exit.
+
+Real-time D405 object-OBB integration check:
+
+```bash
+conda run --no-capture-output -n economicgrasp \
+  python tests/d405_obb_realtime.py --target all
+```
+
+The script uses the same D405 stereo + FFS + YOLO + EfficientSAM perception
+configuration as the Piper test, fits a tight PCA-based oriented bounding box
+to the masked object point cloud, and draws that box in Open3D.
 
 Keyboard-triggered X5 realtime grasping:
 

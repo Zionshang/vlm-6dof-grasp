@@ -8,6 +8,7 @@ GRIPPER_TOLERANCE_M = 0.01
 POSITION_TOLERANCE_M = 0.015
 ORIENTATION_TOLERANCE_RAD = np.deg2rad(5.5)
 STABLE_TIME_S = 0.3
+COMMAND_STATE_TIMEOUT_S = 2.0
 HOLD_POSITION_M = 0.03
 HOLD_ORIENTATION_RAD = np.deg2rad(10)
 ARM_ERRORS = {
@@ -131,8 +132,14 @@ def _wait_for_arrival(robot, previous_target_utime, timeout, label,
 def _command_and_wait(robot, command, timeout, label, gripper=None,
                       expected_pose=None, send_without_state=False):
     state = robot.get_state()
+    deadline = time.monotonic() + COMMAND_STATE_TIMEOUT_S
+    while not send_without_state and not state and time.monotonic() < deadline:
+        time.sleep(0.01)
+        state = robot.get_state()
     if not state and not send_without_state:
-        raise RuntimeError(f"{label}发送前无ARM_STATE")
+        raise RuntimeError(
+            f"{label}发送前{COMMAND_STATE_TIMEOUT_S:.0f}秒内无ARM_STATE"
+        )
     previous = state.get("target_utime", 0) if state else 0
     current_gripper = state.get("gripper_pos") if state else None
     expected_gripper = (

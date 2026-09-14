@@ -1,0 +1,42 @@
+# Good D405: live YOLO preview; press 1 for FFS + EfficientSAM + grasp.
+components:
+  camera:
+    backend: d405_stereo
+    width: 848
+    height: 480
+    fps: 30
+    discard_frames: 5
+  depth:
+    backend: ffs
+    model: third_party/Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth
+    scale: 0.5
+    valid_iters: 4
+    max_disp: 192
+  detector:
+    backend: yolo
+    weights: models/yolo26/best.pt
+    confidence: 0.4
+    iou: 0.7
+    imgsz: 640
+    max_det: 20
+    device: 0
+  segmenter:
+    backend: efficient_sam
+    weights: third_party/EfficientSAM/weights/efficient_sam_vitt.pt
+    device: cuda
+    min_containment: 0.9
+    min_coverage: 0.1
+  grasp_engine:
+    backend: economic
+    checkpoint: third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar
+    use_collision: true
+  visualizer:
+    backend: o3d
+    title: "D405 YOLO + EfficientSAM + EconomicGrasp"
+
+pipeline:
+  box_scale: 1.25
+  predict_topk: 100
+  visualize_topk: 20
+  min_depth_points: 100
+  filter_orientation: true

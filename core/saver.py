@@ -4,13 +4,18 @@
   1) 父目录自动创建(mkdir);
   2) RGB <-> BGR 转换(cv2 用 BGR);
   3) 各类输出(检测框 / 分割 mask / RGBD capture / 2D grasp / reject)的路径与命名。
+     OBB 投影叠加图也集中在这里保存。
 
 所有保存都走这里,调用方只需一行。
 """
+import json
 import shutil
 import cv2
 import numpy as np
 from pathlib import Path
+
+from obb import OBB_EDGES
+from transform import camera_to_base_transform
 
 
 def _ensure_parent(path):
@@ -51,6 +56,58 @@ def save_vlm_boxes(output_dir, color, boxes, run_id=None, tag="vlm"):
     return save_image(Path(output_dir) / "vlm" / name, img, is_rgb=False)
 
 
+def _project_obb(obb, ee_pose, hand_eye_r, hand_eye_t, intrinsic):
+    camera_to_base = camera_to_base_transform(
+        ee_pose, hand_eye_r, hand_eye_t,
+    )
+    points_camera = ((np.asarray(obb.vertices, dtype=float)
+                      - camera_to_base[:3, 3]) @ camera_to_base[:3, :3])
+    if np.any(points_camera[:, 2] <= 1e-6):
+        raise ValueError("OBB顶点不在相机前方")
+
+    fx, fy = intrinsic[0, 0], intrinsic[1, 1]
+    cx, cy = intrinsic[0, 2], intrinsic[1, 2]
+    pixels = np.column_stack((
+        points_camera[:, 0]*fx/points_camera[:, 2]+cx,
+        points_camera[:, 1]*fy/points_camera[:, 2]+cy,
+    ))
+    return pixels
+
+
+def _draw_obb(img, pixels, color, thickness=2):
+    for start, end in OBB_EDGES:
+        cv2.line(img, tuple(pixels[start].astype(int)),
+                 tuple(pixels[end].astype(int)), color, thickness)
+
+
+def save_obb_overlay(output_dir, color, obb, ee_pose, hand_eye_r,
+                     hand_eye_t, intrinsic, run_id=None):
+    """Project a base-frame fused OBB onto its observation RGB and save it."""
+    pixels = _project_obb(obb, ee_pose, hand_eye_r, hand_eye_t, intrinsic)
+    img = cv2.cvtColor(np.asarray(color), cv2.COLOR_RGB2BGR)
+    _draw_obb(img, pixels, (0, 140, 255))
+    name = f"{run_id}_obb.png" if run_id else "obb.png"
+    return save_image(Path(output_dir) / "obb" / name, img, is_rgb=False)
+
+
+def save_obb_samples(output_dir, color, obbs, ee_pose, hand_eye_r,
+                     hand_eye_t, intrinsic, tag):
+    """Project all accepted base-frame OBB samples onto one observation RGB."""
+    img = cv2.cvtColor(np.asarray(color), cv2.COLOR_RGB2BGR)
+    for index, obb in enumerate(obbs):
+        color_bgr = cv2.cvtColor(np.uint8([[
+            [180*index//max(1, len(obbs)-1), 220, 255],
+        ]]), cv2.COLOR_HSV2BGR)[0, 0]
+        pixels = _project_obb(obb, ee_pose, hand_eye_r, hand_eye_t, intrinsic)
+        _draw_obb(img, pixels, tuple(int(value) for value in color_bgr))
+        cv2.putText(img, str(index+1), tuple(pixels[0].astype(int)),
+                    cv2.FONT_HERSHEY_SIMPLEX, .5, tuple(int(v) for v in color_bgr), 1)
+    path = save_image(Path(output_dir) / "obb" / "raw" / f"{tag}.png",
+                      img, is_rgb=False)
+    print(f"[输出] OBB采样图已保存: {path}")
+    return path
+
+
 def save_seg_mask(output_dir, mask, run_id=None):
     """保存分割 mask 到 output_dir/sam/{run_id}_sam.png。"""
     name = f"{run_id}_sam.png" if run_id else "seg_result.png"
@@ -66,6 +123,15 @@ def save_capture(output_dir, color, depth, timestamp):
     if np.issubdtype(depth.dtype, np.floating):
         depth = np.clip(depth * 1000.0, 0, np.iinfo(np.uint16).max).astype(np.uint16)
     save_image(base / f"{timestamp}_depth.png", depth, is_rgb=False)
+
+
+def save_grasp_result(output_dir, result, run_id):
+    """Save the selected camera-frame grasp without coupling to its backend."""
+    path = _ensure_parent(Path(output_dir) / "grasp" / f"{run_id}_first.json")
+    with path.open("w", encoding="utf-8") as stream:
+        json.dump(result, stream, ensure_ascii=False, indent=2)
+    print(f"[输出] first抓取结果已保存: {path}")
+    return path
 
 
 def save_2d_grasp(output_dir, imgs, subdir=None):

@@ -1,8 +1,8 @@
 # Component plugins
 
-Each subdirectory is one replaceable role. A backend registers one factory in
-the shared `core/registry.py` registry; application code selects it by name in
-`config/apps/*.yaml`.
+Subdirectories group related replaceable backends. Each backend registers its
+role and factory in `core/registry.py`; application code selects roles
+independently in `config/apps/*.yaml`.
 
 | Role | Runtime contract | Typical dependencies |
 |---|---|---|
@@ -10,6 +10,10 @@ the shared `core/registry.py` registry; application code selects it by name in
 | `depth` | `step(frame)`, `factor_depth` | camera for stereo FFS |
 | `detector` | `detect(image, prompt)` | none |
 | `segmenter` | `segment(image, boxes)` | none |
+| `obb_estimator` | `estimate(depth, mask, label)` | camera, depth |
+| `obb_fusion` | stable filtering and base-frame fusion | none |
+| `view_adjust` | `plan(obb, ee_pose, label)` | none |
+| `view_plan_visualizer` | `show(obb, plan, width, seconds, start_pose)` | none |
 | `grasp_engine` | `predict(image, depth, mask, topk)` | camera, depth |
 | `selector` | `select(...)` | none |
 | `executor` | `run_sequence(...)` | robot |

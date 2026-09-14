@@ -21,14 +21,42 @@ components:
     valid_iters: 4
     max_disp: 192
   detector:
-    backend: vlm
-    model: qwen3-vl:8b-instruct-q4_K_M
-    host: http://127.0.0.1:11434
-    num_ctx: 4096
-    keep_alive: 0
+    backend: yolo
+    weights: models/yolo26/best.pt
+    confidence: 0.7
+    iou: 0.7
+    imgsz: 640
+    max_det: 20
+    device: 0
+    classes: [watermelon, can, lunch_box, red_bag]
   segmenter:
     backend: efficient_sam
     weights: third_party/EfficientSAM/weights/efficient_sam_vitt.pt
+    min_containment: 0.9
+    min_coverage: 0.1
+  obb_estimator:
+    backend: point_cloud
+    min_points: 100
+    robust: true
+    size_tolerance: 0.25
+    priors:
+      red_bag: [0.30, 0.15, 0.11]
+      lunch_box: [0.21, 0.15, 0.05]
+  obb_fusion:
+    backend: stable
+    target_samples: 5
+    center_jump: 0.025
+    extent_jump: 0.15
+    angle_jump_deg: 12
+    min_inlier_ratio: 0.80
+  view_adjust:
+    backend: obb_arc
+    max_angle_deg: 60
+    step_deg: 10
+    max_move: 0.3
+  view_plan_visualizer:
+    backend: o3d
+    lazy: true
   grasp_engine:
     backend: economic
     checkpoint: third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar
@@ -46,12 +74,15 @@ components:
       - {name: home, gripper: target, use_home_pose: true}
   visualizer:
     backend: o3d
-    enabled: false
+    enabled: true
     lazy: true
     title: "Piper D405 FFS Grasp Test"
 
 pipeline:
+  box_scale: 1.25
   predict_topk: 100
   selector_topk: 12
   filter_orientation: true
   save_debug: true
+  obb_warmup_seconds: 5
+  obb_collection_timeout: 30

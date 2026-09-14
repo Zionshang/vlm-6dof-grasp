@@ -1,1 +1,1 @@
-from . import vlm   # noqa: F401
+from . import vlm, yolo   # noqa: F401

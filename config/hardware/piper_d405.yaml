@@ -38,8 +38,14 @@ poses:
     - [0.178, 0.0, 0.223, 0.0, 0.85, 0.0]
 
 target_approach:
-  offset: [-0.13, 0.0, 0.10]
-  rpy: [0.0, 0.85, 0.0]
+  default:
+    offset: [-0.12, 0.0, 0.13]
+    rpy: [0.0, 0.9, 0.0]
+  targets:
+    red_bag:
+      offset: [-0.18, 0.0, 0.33]
+    lunch_box:
+      offset: [-0.14, 0.0, 0.20]
 
 lcm:
   arm:

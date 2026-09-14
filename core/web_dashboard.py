@@ -28,13 +28,16 @@ class _LogWriter:
         if self.echo:
             self.original.write(text)
             self.original.flush()
-        self.buffer += text
-        while "\n" in self.buffer:
-            line, self.buffer = self.buffer.split("\n", 1)
-            try:
-                self.dashboard.log(line, self.channel)
-            except Exception:
-                pass
+        for part in re.split(r"([\r\n])", text):
+            if part == "\r":
+                self.buffer = ""
+            elif part == "\n":
+                self.dashboard.log(self.buffer, self.channel)
+                self.buffer = ""
+            else:
+                self.buffer += part
+        with self.dashboard._lock:
+            self.dashboard._pending[self] = (self.buffer, self.channel)
         return len(text)
 
     def flush(self):
@@ -53,6 +56,7 @@ class WebDashboard:
         self.started_at = time.time() - 1.0
         self._lock = threading.Lock()
         self._logs = {"flow": [], "detail": []}
+        self._pending = {}
         self._task = {}
         self._scene, self._scene_version = {}, 0
         self._server = None
@@ -85,7 +89,7 @@ class WebDashboard:
         @app.get("/api/status")
         def status():
             with self._lock:
-                payload = {**self._logs, "task": self._task,
+                payload = {**self._log_snapshot(), "task": self._task,
                            "scene_version": self._scene_version}
             payload["images"] = self._images()
             return jsonify(payload)
@@ -128,6 +132,18 @@ class WebDashboard:
             if channel == "detail":
                 self._logs["detail"] = (self._logs["detail"] + [line])[-2000:]
 
+    def _log_snapshot(self):
+        """Caller holds the lock; unfinished terminal lines stay replaceable."""
+        logs = {key: list(lines) for key, lines in self._logs.items()}
+        for line, channel in self._pending.values():
+            line = _ANSI.sub("", line).strip()
+            if line:
+                logs["flow"].append(line)
+                if channel == "detail" or (channel is None
+                        and not line.startswith(_FLOW_PREFIXES)):
+                    logs["detail"].append(line)
+        return logs
+
     @contextmanager
     def _capture(self, channel, echo):
         stdout, stderr = sys.stdout, sys.stderr
@@ -135,9 +151,17 @@ class WebDashboard:
             stdout = stdout.original
         while isinstance(stderr, _LogWriter):
             stderr = stderr.original
-        with redirect_stdout(_LogWriter(self, stdout, channel, echo)), \
-                redirect_stderr(_LogWriter(self, stderr, "detail", echo)):
-            yield
+        writers = (_LogWriter(self, stdout, channel, echo),
+                   _LogWriter(self, stderr, "detail", echo))
+        try:
+            with redirect_stdout(writers[0]), redirect_stderr(writers[1]):
+                yield
+        finally:
+            for writer in writers:
+                if writer.buffer:
+                    self.log(writer.buffer, writer.channel)
+                with self._lock:
+                    self._pending.pop(writer, None)
 
     def capture_output(self):
         return self._capture(None, True)

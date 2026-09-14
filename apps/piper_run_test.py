@@ -12,19 +12,22 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import paths
 
-from grasp_geometry import box_center_to_base, expand_boxes
+from grasp_geometry import expand_boxes
 from grasp_perception import (
     GraspPerception, capture_rgbd, detect_target, retry,
 )
 from hardware import HardwareConfig
 from manager import GraspManager
+from obb_observation import OBBObservation
 from robot_safety import (
     monitor_robot_state, move_to_pose_and_wait, require_not_emergency_stopped,
     reset_to_home_and_wait, safe_stop_and_wait, wait_for_robot_state,
 )
-from saver import save_capture, save_seg_mask, save_vlm_boxes, try_save
-from transform import convert_new
-from vlm.src.utils.image_utils import make_bbox_mask
+from saver import (
+    save_capture, save_grasp_result, save_obb_overlay, save_obb_samples,
+    save_seg_mask, save_vlm_boxes, try_save,
+)
+from transform import box_center_to_base, convert_new
 
 
 ROOT = paths.PROJECT_ROOT
@@ -32,7 +35,8 @@ logging.getLogger().setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-TASK_NAMES = {"grasp": "全流程抓取", "reach": "Reach 精度测试", "sam": "SAM 分割测试"}
+TASK_NAMES = {"grasp": "全流程抓取", "reach": "Reach 精度测试",
+              "sam": "SAM 分割测试", "obb": "OBB观测规划测试"}
 
 
 def _brief(exc):
@@ -65,14 +69,26 @@ def _web_context(dashboard, detail=False):
         return nullcontext()
 
 
-def locate_target(perception, hw, prompt, ee_pose, flush_frames):
+def _save_obb_debug(observer, output_dir, run_id, stage):
+    color, depth, box, expanded_box, mask = observer.debug_frame()
+    try_save("OBB RGB-D", save_capture, output_dir, color, depth,
+             f"{run_id}_{stage}")
+    try_save("OBB检测图", save_vlm_boxes, output_dir, color, [box],
+             run_id, f"{stage}_origin_vlm")
+    try_save("OBB扩框图", save_vlm_boxes, output_dir, color,
+             [expanded_box], run_id, f"{stage}_vlm")
+    try_save("OBB分割图", save_seg_mask, output_dir, mask,
+             f"{run_id}_{stage}")
+
+
+def locate_target(perception, hw, target, ee_pose, flush_frames):
     attempt = 0
 
     def locate_once():
         nonlocal attempt
         attempt += 1
         color, depth = perception.capture(flush_frames)
-        detection = perception.detector.detect(color, prompt)
+        detection = perception.detector.detect(color, target)
         if not detection or not detection.boxes:
             raise RuntimeError("未检测到目标")
         try_save("远距离检测图", save_vlm_boxes, perception.output_dir,
@@ -96,6 +112,36 @@ def visualize(manager, color, depth, grasps, seconds):
             time.sleep(0.02)
     except Exception as exc:
         raise RuntimeError(f"O3D可视化失败: {_brief(exc)}") from exc
+
+
+def generate_grasp_preview(args, manager, perception, dashboard, run_id=None):
+    """Generate, first-select, save and visualize one grasp without motion."""
+    print("[流程] 检测 → 分割 → 抓取生成")
+    color, depth = perception.capture(args.flush_frames)
+    run_id = run_id or time.strftime("%Y%m%d-%H%M%S")
+    try_save("RGB-D", save_capture, perception.output_dir, color, depth, run_id)
+    grasps = perception.generate(color, depth, args.target, run_id)
+    if grasps is None or not len(grasps):
+        raise RuntimeError("抓取生成无结果")
+
+    print("[流程] first 筛选")
+    selected = perception.select(color, grasps)
+    if selected is None:
+        raise RuntimeError("二维筛选无候选")
+    index = int(selected["source_index"])
+    result = grasps[index:index + 1]
+    print(f"[抓取结果] source={index}, "
+          f"position={np.round(selected['translation'], 4).tolist()} m, "
+          f"width={selected['width']:.4f} m")
+    try_save("first抓取结果", save_grasp_result,
+             perception.output_dir, selected, run_id)
+    _web(dashboard, "3D更新", lambda: dashboard.update_scene(
+        color, depth, result, perception.grasp_engine.intrinsic))
+    if manager.specs.get("visualizer", {}).get("enabled", True):
+        print("[流程] O3D 抓取结果可视化")
+        with _web_context(dashboard, True):
+            visualize(manager, color, depth, result, args.visualize_seconds)
+    return selected
 
 
 def adjust_ry(command):
@@ -123,7 +169,10 @@ def execute_selected(manager, robot, hw, selected, timeout, steps, width):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--prompt", default="orange")
+    parser.add_argument(
+        "--target", default="all",
+        help="YOLO类别: watermelon/can/lunch_box/red_bag，逗号分隔，all为全部",
+    )
     parser.add_argument("--hardware-profile", default="config/hardware/piper_d405.yaml")
     parser.add_argument("--app-config", default="config/apps/piper_run_test.yaml")
     parser.add_argument("--output-dir", default="output/piper_run_test")
@@ -137,7 +186,7 @@ def parse_args():
         help="override camera component discard_frames (default: component value)",
     )
     parser.add_argument("--visualize-seconds", type=float, default=30.0)
-    parser.add_argument("--mode", choices=("grasp", "reach", "sam"),
+    parser.add_argument("--mode", choices=("grasp", "reach", "sam", "obb"),
                         default="grasp")
     return parser.parse_args()
 
@@ -160,14 +209,14 @@ def initialize_system(args):
     try:
         dashboard = manager.require("dashboard")
         dashboard.set_output_dir(ROOT / args.output_dir)
-        dashboard.set_task(TASK_NAMES[args.mode], args.prompt)
+        dashboard.set_task(TASK_NAMES[args.mode], args.target)
     except Exception as exc:
         dashboard = None
         print(f"[网页] 初始化不可用: {_brief(exc)}")
     robot = None
     safe = False
     with _web_context(dashboard):
-        print(f"[任务] {TASK_NAMES[args.mode]} | 目标: {args.prompt}")
+        print(f"[任务] {TASK_NAMES[args.mode]} | 目标: {args.target}")
         try:
             robot = _step("机械臂驱动初始化失败", lambda: manager.require("robot"))
             state = wait_for_robot_state(robot, args.state_timeout)
@@ -178,11 +227,14 @@ def initialize_system(args):
             print("[流程] 加载感知组件")
             with _web_context(dashboard, True):
                 roles = ["detector", "camera", "depth", "segmenter"]
-                if args.mode != "sam":
+                if args.mode in ("grasp", "reach"):
                     roles += ["grasp_engine", "selector", "executor"]
+                elif args.mode == "obb":
+                    roles += ["obb_estimator", "obb_fusion", "view_adjust",
+                              "view_plan_visualizer"]
                 try:
                     manager.initialize(roles)
-                    perception = (None if args.mode == "sam" else
+                    perception = (None if args.mode in ("sam", "obb") else
                                   GraspPerception.from_manager(
                                       manager, ROOT / args.output_dir))
                 except Exception as exc:
@@ -190,6 +242,11 @@ def initialize_system(args):
                 if not manager.handshake():
                     detail = manager.handshake_error or "首帧超时"
                     raise RuntimeError(f"相机握手失败: {_brief(detail)}")
+                validate_target = getattr(
+                    manager.get("detector"), "validate_target", None,
+                )
+                if callable(validate_target):
+                    validate_target(args.target)
             print("[就绪] 感知组件")
             yield hw, manager, robot, perception, dashboard
         except BaseException as exc:
@@ -217,37 +274,22 @@ def prepare_grasp(args, hw, manager, robot, perception, dashboard):
     )
     with _web_context(dashboard, True):
         target = locate_target(
-            perception, hw, args.prompt, far_state["ee_pose"], args.flush_frames,
+            perception, hw, args.target, far_state["ee_pose"], args.flush_frames,
         )
 
     # ----- Close observation -----
     print("[流程] 近距离观测")
-    approach_pose = np.r_[target + hw.target_approach_offset,
-                          hw.target_approach_rpy]
+    offset, rpy = hw.approach_for(args.target)
+    approach_pose = np.r_[target + offset, rpy]
     move_to_pose_and_wait(
         robot, hw, approach_pose, hw.gripper_approach_width,
         args.arrival_timeout, "Close observation",
     )
 
-    # ----- Perception, visualization, selection and execution -----
-    print("[流程] 检测 → 分割 → 抓取生成")
-    color, depth = perception.capture(args.flush_frames)
-    run_id = time.strftime("%Y%m%d-%H%M%S")
-    try_save("RGB-D", save_capture, perception.output_dir, color, depth, run_id)
-    grasps = perception.generate(color, depth, args.prompt, run_id)
-    if grasps is None or not len(grasps):
-        raise RuntimeError("抓取生成无结果")
-    _web(dashboard, "3D更新", lambda: dashboard.update_scene(
-        color, depth, grasps, perception.grasp_engine.intrinsic))
-    if manager.specs.get("visualizer", {}).get("enabled", True):
-        print("[流程] O3D 可视化")
-        with _web_context(dashboard, True):
-            visualize(manager, color, depth, grasps, args.visualize_seconds)
-    print("[流程] first 筛选")
-    selected = perception.select(color, grasps)
-    if selected is None:
-        raise RuntimeError("二维筛选无候选")
-    return selected
+    return generate_grasp_preview(
+        args, manager, perception, dashboard,
+        time.strftime("%Y%m%d-%H%M%S"),
+    )
 
 
 def run_test(args, hw, manager, robot, perception, dashboard):
@@ -277,7 +319,7 @@ def run_grasp(args, hw, manager, robot, perception, dashboard):
 
 
 def sam_test(args, hw, manager, robot, perception, dashboard):
-    """Retry the configured box-prompt segmenter for at most 30 seconds."""
+    """Validate the configured box-prompt segmenter with shared retry."""
     camera, detector = manager.require("camera"), manager.require("detector")
     segmenter = manager.require("segmenter")
     intrinsic = np.array([[camera.color_fx, 0, camera.color_cx],
@@ -288,45 +330,116 @@ def sam_test(args, hw, manager, robot, perception, dashboard):
                                 args.arrival_timeout, "Far observation")
     source = manager.ctx, camera, manager.require("depth")
     color, depth = capture_rgbd(*source, args.flush_frames)
-    detection = detect_target(detector, color, args.prompt)
+    detection = detect_target(detector, color, args.target)
     target = retry("目标定位", lambda: box_center_to_base(
         depth, detection.boxes[0], intrinsic, far["ee_pose"],
         hw.hand_eye_r, hw.hand_eye_t), empty="目标框中心无有效深度")
-    pose = np.r_[target + hw.target_approach_offset, hw.target_approach_rpy]
+    offset, rpy = hw.approach_for(args.target)
+    pose = np.r_[target + offset, rpy]
     move_to_pose_and_wait(robot, hw, pose, hw.gripper_approach_width,
                           args.arrival_timeout, "Close observation")
 
-    deadline, attempt = time.monotonic() + 30, 0
-    while time.monotonic() < deadline:
-        attempt += 1
-        color, _ = capture_rgbd(*source, args.flush_frames)
-        detection = detect_target(detector, color, args.prompt)
-        boxes = expand_boxes(detection.boxes, color.shape)
-        mask = retry("目标分割", lambda: segmenter.segment(color, boxes),
-                     empty="无结果")
-        tag = time.strftime("%Y%m%d-%H%M%S") + f"_sam_test_{attempt}"
-        try_save("检测图", save_vlm_boxes, ROOT / args.output_dir,
-                 color, boxes, tag)
-        try_save("分割图", save_seg_mask, ROOT / args.output_dir, mask, tag)
-        box_mask = make_bbox_mask(boxes, *mask.shape)
-        inside = np.count_nonzero(mask & box_mask)
-        containment = inside / max(1, np.count_nonzero(mask))
-        coverage = inside / max(1, np.count_nonzero(box_mask))
-        print(f"[SAM] attempt={attempt}, containment={containment:.2f}, "
-              f"coverage={coverage:.2f}")
-        if containment >= .7 and coverage >= .1:
-            reset_to_home_and_wait(robot, args.arrival_timeout, hw.home_pose)
-            robot.disable_safe_stop()
-            print("[成功] SAM 分割通过")
-            return
-    raise RuntimeError("SAM test 30秒内未得到合格目标 mask")
+    color, _ = capture_rgbd(*source, args.flush_frames)
+    detection = detect_target(detector, color, args.target)
+    boxes = expand_boxes(detection.boxes, color.shape)
+    mask = retry("目标分割", lambda: segmenter.segment(color, boxes),
+                 empty="无结果")
+    tag = time.strftime("%Y%m%d-%H%M%S") + "_sam_test"
+    try_save("检测图", save_vlm_boxes, ROOT / args.output_dir, color, boxes, tag)
+    try_save("分割图", save_seg_mask, ROOT / args.output_dir, mask, tag)
+    reset_to_home_and_wait(robot, args.arrival_timeout, hw.home_pose)
+    robot.disable_safe_stop()
+    print("[成功] SAM 分割通过")
+
+
+def obb_test(args, hw, manager, robot, perception, dashboard):
+    """Locate from ready, collect one stable medium-view OBB, then plan."""
+    if args.target not in ("lunch_box", "red_bag"):
+        raise RuntimeError("OBB测试仅支持--target lunch_box或red_bag")
+    fusion = manager.require("obb_fusion")
+    observer = OBBObservation.from_manager(manager)
+    output_dir = ROOT / args.output_dir
+    run_id = time.strftime("%Y%m%d-%H%M%S") + f"_{args.target}"
+
+    print("[流程] 远距离目标定位")
+    ready_state = move_to_pose_and_wait(
+        robot, hw, hw.ready_views[0], hw.gripper_approach_width,
+        args.arrival_timeout, "Far observation",
+    )
+    time.sleep(1)
+    target = observer.locate_box_center(
+        args.target, ready_state["ee_pose"], hw.hand_eye_r, hw.hand_eye_t,
+        args.flush_frames,
+    )
+
+    print("[流程] 移动到中距离观测位姿")
+    offset, rpy = hw.approach_for(args.target)
+    observation_pose = np.r_[target + offset, rpy]
+    observation_state = move_to_pose_and_wait(
+        robot, hw, observation_pose, hw.gripper_approach_width,
+        args.arrival_timeout, "Medium observation",
+    )
+    time.sleep(1)
+    samples = observer.collect(
+        args.target, observation_state["ee_pose"], "中观测", args.flush_frames,
+    )
+    _save_obb_debug(observer, output_dir, run_id, "medium")
+    try_save(
+        "中距离raw OBB图", save_obb_samples,
+        output_dir, observer.last_rgb, samples,
+        observation_state["ee_pose"], hw.hand_eye_r, hw.hand_eye_t,
+        observer.intrinsic, f"{run_id}_medium",
+    )
+
+    fused = fusion.fuse(samples)
+    print(f"[融合OBB] center={np.round(fused.center, 4).tolist()} m, "
+          f"size={np.round(fused.extents, 4).tolist()} m, "
+          f"points={fused.point_count}, coverage={fused.inlier_ratio:.1%}")
+    try_save(
+        "中观测OBB叠加图", save_obb_overlay,
+        output_dir, observer.last_rgb, fused,
+        observation_state["ee_pose"], hw.hand_eye_r, hw.hand_eye_t,
+        observer.intrinsic,
+        f"{run_id}_medium",
+    )
+    plan = manager.require("view_adjust").plan(
+        fused, observation_state["ee_pose"], args.target, frame="base",
+    )
+    print(f"[规划结果] face={plan.face}, angle={np.rad2deg(plan.angle):.1f}°, "
+          f"waypoints={len(plan.ee_poses)}, samples={len(samples)}")
+    manager.require("view_plan_visualizer").show(
+        fused, plan, hw.gripper_approach_width, args.visualize_seconds,
+        observation_state["ee_pose"],
+    )
+    execute = input("[确认] 是否执行 OBB 规划并生成抓取结果？[y/N]: ").strip().lower()
+    if execute == "y":
+        if not plan.ee_poses:
+            raise RuntimeError(f"OBB规划无可执行路点: {plan.reason}")
+        print("[流程] 逐路点执行 OBB 观测规划")
+        for index, pose in enumerate(plan.ee_poses, 1):
+            move_to_pose_and_wait(
+                robot, hw, pose, hw.gripper_approach_width,
+                args.arrival_timeout, f"OBB waypoint {index}/{len(plan.ee_poses)}",
+            )
+        print("[流程] 加载抓取模型（仅生成，不执行抓取）")
+        grasp_perception = GraspPerception.from_manager(manager, output_dir)
+        generate_grasp_preview(
+            args, manager, grasp_perception, dashboard, f"{run_id}_planned",
+        )
+        message = "OBB规划执行及抓取结果预览完成，未执行抓取"
+    else:
+        message = "OBB观测规划测试完成，未执行规划路点"
+    reset_to_home_and_wait(robot, args.arrival_timeout, hw.home_pose)
+    robot.disable_safe_stop()
+    print(f"[成功] {message}")
 
 
 def main():
     args = parse_args()
     try:
         with initialize_system(args) as system:
-            {"grasp": run_grasp, "reach": run_test, "sam": sam_test}[
+            {"grasp": run_grasp, "reach": run_test, "sam": sam_test,
+             "obb": obb_test}[
                 args.mode](args, *system)
     except Exception as exc:
         if not getattr(exc, "_reported", False):

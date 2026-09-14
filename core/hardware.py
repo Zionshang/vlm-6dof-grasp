@@ -68,8 +68,10 @@ class HardwareConfig:
 
         # ---- target-relative close observation pose ----
         approach = c.get("target_approach") or {}
-        self.target_approach_offset = self._optional_array(approach.get("offset"))
-        self.target_approach_rpy = self._optional_array(approach.get("rpy"))
+        self._target_approach = approach
+        default = approach.get("default") or approach
+        self.target_approach_offset = self._optional_array(default.get("offset"))
+        self.target_approach_rpy = self._optional_array(default.get("rpy"))
 
         # ---- application motion policy (robot-specific) ----
         self.grasp_policy = c.get("grasp_policy")
@@ -88,6 +90,13 @@ class HardwareConfig:
     @staticmethod
     def _optional_array(value):
         return None if value is None else np.array(value, dtype=float)
+
+    def approach_for(self, target):
+        """Return the close-observation offset/RPY for one target label."""
+        override = (self._target_approach.get("targets") or {}).get(target) or {}
+        offset = override.get("offset", self.target_approach_offset.tolist())
+        rpy = override.get("rpy", self.target_approach_rpy.tolist())
+        return np.asarray(offset, dtype=float), np.asarray(rpy, dtype=float)
 
     def missing_for_grasp_lcm(self):
         """Return unset parameters required by the live LCM grasp application."""
