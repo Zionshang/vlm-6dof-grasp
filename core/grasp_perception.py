@@ -1,128 +1,196 @@
 """Shared detection, segmentation and grasp-candidate orchestration."""
+from dataclasses import dataclass
 from pathlib import Path
 
-from grasp_geometry import expand_boxes, filter_grasps_by_orientation
+from depth_geometry import mask_depth_target
+from perception_errors import PerceptionEmptyError
 from saver import save_seg_mask, save_vlm_boxes, try_save
+from target_confirmation import TargetConfirmer
 
 
-def _run(name, call):
-    try:
-        return call()
-    except Exception as exc:
-        detail = str(exc).splitlines()
-        raise RuntimeError(f"{name}: {detail[0] if detail else type(exc).__name__}") from exc
+GRASP_ATTEMPTS = 10
 
 
-def retry(name, call, valid=lambda value: value is not None, empty="无有效结果"):
-    """Try one fallible perception step three times."""
-    for attempt in range(1, 4):
+@dataclass(frozen=True)
+class Observation:
+    color: object
+    depth: object
+    box: list[int]
+    score: float
+    label: str
+    mask: object
+
+
+@dataclass(frozen=True)
+class PerceptionResult:
+    observation: Observation
+    grasps: object
+    stats: dict
+
+
+def retry(name, call, valid=lambda value: value is not None, empty="无有效结果",
+          attempts=3):
+    """Retry expected empty results; propagate system and programming errors."""
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
         try:
-            result, reason = call(), empty
+            result = call()
+        except PerceptionEmptyError as exc:
+            reason = str(exc).splitlines()[0] or type(exc).__name__
+        else:
             if valid(result):
                 return result
-        except Exception as exc:
-            reason = str(exc).splitlines()[0] or type(exc).__name__
-        if attempt < 3:
-            print(f"[重试] {name} {attempt}/3: {reason}")
-    raise RuntimeError(f"{name}: {reason}")
-
-
-def capture_rgbd(ctx, camera, depth, flush_count=None):
-    """Capture one fresh RGB-D pair through any camera/depth plugins."""
-    def capture_once():
-        ctx.color = ctx.depth = ctx.ir = None
-        capture = getattr(camera, "capture", None)
-        if callable(capture):
-            capture(ctx, discard_frames=flush_count)
-        else:
-            for _ in range(max(0, int(flush_count or 0)) + 1):
-                camera.step(ctx)
-        depth.step(ctx)
-        return ctx.color, ctx.depth
-    return retry("相机取帧", capture_once,
-                 lambda frames: all(frame is not None for frame in frames),
-                 "无有效RGB-D帧")
-
-
-def detect_target(detector, color, prompt):
-    return retry("目标检测", lambda: detector.detect(color, prompt),
-                 lambda result: bool(result and result.boxes), "未检测到目标")
+            reason = empty
+        if attempt < attempts:
+            print(f"[重试] {name} {attempt}/{attempts}: {reason}")
+    raise PerceptionEmptyError(f"{name}: {reason}")
 
 
 class GraspPerception:
     """Compose pluggable perception components without owning robot motion."""
 
-    def __init__(self, ctx, camera, depth, detector, segmenter, grasp_engine,
-                 selector, output_dir, config=None):
+    def __init__(self, ctx, camera, depth, instance_model, grasp_engine,
+                 output_dir, config=None):
         self.ctx, self.camera, self.depth = ctx, camera, depth
-        self.detector, self.segmenter = detector, segmenter
-        self.grasp_engine, self.selector = grasp_engine, selector
+        self.instance_model = instance_model
+        self.grasp_engine = grasp_engine
         self.output_dir = Path(output_dir)
-        self.mask = None
         cfg = config or {}
         self.predict_topk = int(cfg.get("predict_topk", 100))
-        self.selector_topk = int(cfg.get("selector_topk", 8))
-        self.filter_orientation = bool(cfg.get("filter_orientation", False))
         self.save_debug = bool(cfg.get("save_debug", False))
-        self.box_scale = float(cfg.get("box_scale", 1.25))
+        self.locate_max_depth = float(cfg.get("locate_max_depth_m", .85))
+        self.min_target_depth_points = int(
+            cfg.get("min_target_depth_points", 100)
+        )
+        confirmation = cfg.get("confirmation") or {}
+        self.max_frames = int(confirmation.get("max_frames", 40))
+        self.confirmation = {
+            "high_confidence": confirmation.get("high_confidence", .9),
+            "high_frames": confirmation.get("high_frames", 5),
+            "normal_confidence": confirmation.get("normal_confidence", .8),
+            "normal_frames": confirmation.get("normal_frames", 10),
+        }
 
     @classmethod
     def from_manager(cls, manager, output_dir):
-        roles = ("camera", "depth", "detector", "segmenter",
-                 "grasp_engine", "selector")
+        roles = ("camera", "depth", "instance_model", "grasp_engine")
         return cls(manager.ctx, *(manager.require(role) for role in roles),
                    output_dir, manager.app_config.get("pipeline"))
 
-    def capture(self, flush_count=None):
-        return capture_rgbd(self.ctx, self.camera, self.depth, flush_count)
+    def observe(self, prompt, flush_count=None, run_id=None, label=None):
+        return self._observe(prompt, flush_count, run_id, label, False)[0]
 
-    def detect(self, color, prompt):
-        return detect_target(self.detector, color, prompt)
+    def observe_all(self, prompt, flush_count=None, run_id=None, label=None):
+        """Return all target instances from one temporally confirmed frame."""
+        return self._observe(prompt, flush_count, run_id, label, True)
 
-    def generate(self, color, depth, prompt, run_id=None):
-        detection = self.detect(color, prompt)
-        if self.save_debug:
-            try_save("检测图", save_vlm_boxes, self.output_dir, color,
-                     detection.boxes, run_id, "origin_vlm")
-
-        boxes = expand_boxes(detection.boxes, color.shape, self.box_scale)
-        if self.save_debug:
-            try_save("检测图", save_vlm_boxes, self.output_dir, color,
-                     boxes, run_id)
-        mask = retry("目标分割", lambda: self.segmenter.segment(color, boxes),
-                     empty="无结果")
-        self.mask = mask
-        rgb_shape = color.shape[:2]
-        if depth.shape != rgb_shape or mask.shape != rgb_shape:
-            raise RuntimeError(
-                "RGB/深度/mask未对齐: "
-                f"rgb={rgb_shape}, depth={depth.shape}, mask={mask.shape}"
+    def _observe(self, prompt, flush_count, run_id, label, multiple):
+        confirmer = TargetConfirmer(**self.confirmation)
+        missing_color = empty_detection = confirmed_frames = missing_depth = 0
+        peak_high = peak_normal = 0
+        best_scores, last_scores = {}, {}
+        for frame in range(self.max_frames):
+            self.ctx.color = self.ctx.depth = self.ctx.ir = None
+            self.camera.capture(
+                self.ctx, discard_frames=flush_count if frame == 0 else 0,
             )
-        if self.save_debug:
-            try_save("分割图", save_seg_mask, self.output_dir, mask, run_id)
+            if self.ctx.color is None:
+                missing_color += 1
+                confirmer.reset()
+                continue
+            instances = self.instance_model.predict(self.ctx.color, prompt)
+            if not instances:
+                empty_detection += 1
+            last_scores = {}
+            for item in instances:
+                last_scores[item.label] = max(
+                    last_scores.get(item.label, 0.0), item.score,
+                )
+                best_scores[item.label] = max(
+                    best_scores.get(item.label, 0.0), item.score,
+                )
+            confirmed = (confirmer.update_all(instances) if multiple else
+                         confirmer.update(instances))
+            peak_high = max(peak_high, confirmer.high_count)
+            peak_normal = max(peak_normal, confirmer.normal_count)
+            if confirmed is None:
+                continue
+            confirmed_frames += 1
+            selected, reason = confirmed
+            selected = selected if multiple else [selected]
+            self.depth.step(self.ctx)
+            if self.ctx.depth is None:
+                missing_depth += 1
+                continue
+            shape = self.ctx.color.shape[:2]
+            if (self.ctx.depth.shape != shape or
+                    any(item.mask.shape != shape for item in selected)):
+                raise RuntimeError(
+                    "RGB/深度/mask未对齐: "
+                    f"rgb={shape}, depth={self.ctx.depth.shape}"
+                )
+            name = label or prompt
+            scores = ", ".join(
+                f"{item.label}:{item.score:.3f}" for item in selected
+            )
+            print(f"[确认] {name}: {reason}, {scores}")
+            if self.save_debug:
+                try_save("检测图", save_vlm_boxes, self.output_dir,
+                         self.ctx.color, [item.box for item in selected],
+                         run_id, "yolo_seg")
+                for index, item in enumerate(selected):
+                    suffix = (run_id if len(selected) == 1 or run_id is None
+                              else f"{run_id}_{index}")
+                    try_save("分割图", save_seg_mask, self.output_dir,
+                             item.mask, suffix)
+            return [Observation(
+                self.ctx.color, self.ctx.depth, item.box,
+                item.score, item.label, item.mask,
+            ) for item in selected]
+        scores = lambda values: (", ".join(
+            f"{name}:{score:.3f}" for name, score in sorted(values.items())
+        ) or "无")
+        raise PerceptionEmptyError(
+            f"{label or prompt}观察{self.max_frames}帧无有效结果: "
+            f"无RGB={missing_color}, YOLO空={empty_detection}, "
+            f"连续≥{self.confirmation['high_confidence']:.2f}最高="
+            f"{peak_high}/{self.confirmation['high_frames']}, "
+            f"连续≥{self.confirmation['normal_confidence']:.2f}最高="
+            f"{peak_normal}/{self.confirmation['normal_frames']}, "
+            f"最高置信度={scores(best_scores)}, "
+            f"末帧={scores(last_scores)}, "
+            f"确认后无深度={missing_depth}/{confirmed_frames}"
+        )
 
-        grasps, _ = retry(
+    def target_point(self, observation):
+        return mask_depth_target(
+            observation.depth, observation.mask,
+            self.grasp_engine.intrinsic, self.locate_max_depth,
+            self.min_target_depth_points,
+        )
+
+    def generate(self, observation, label=None):
+        color, depth, mask = (
+            observation.color, observation.depth, observation.mask,
+        )
+
+        grasps, info = retry(
             "抓取生成", lambda: self.grasp_engine.predict(
                 color, depth, mask=mask, topk=self.predict_topk,
             ),
             lambda result: bool(result and result[0] is not None
                                 and len(result[0]) > 0), "无结果",
+            attempts=GRASP_ATTEMPTS,
         )
-        if self.filter_orientation:
-            grasps = filter_grasps_by_orientation(grasps, self.selector_topk)
-        return grasps
-
-    def select(self, color, grasps):
-        if grasps is None or len(grasps) == 0:
-            return None
-        index, candidates = _run(
-            "二维筛选失败", lambda: self.selector.select(
-                color, grasps.translations, grasps.rotation_matrices,
-                grasps.widths, grasps.depths, self.grasp_engine.intrinsic,
-                top_k=self.selector_topk, output_dir=self.output_dir,
-                mask=self.mask,
-            ),
+        info = info or {}
+        generated = int(info.get("generated_count", len(grasps)))
+        target_rejected = int(info.get("target_rejected", 0))
+        collision_rejected = int(info.get("collision_rejected", 0))
+        prefix = f"{label}: " if label else ""
+        print(
+            f"[候选] {prefix}模型输出={generated}, "
+            f"目标体积淘汰={target_rejected}, "
+            f"场景碰撞淘汰={collision_rejected}, "
+            f"最终={len(grasps)}（topk上限={self.predict_topk}）"
         )
-        if not candidates or not 0 <= index < len(candidates):
-            raise RuntimeError("二维筛选无候选")
-        return candidates[index]
+        return PerceptionResult(observation, grasps, info)

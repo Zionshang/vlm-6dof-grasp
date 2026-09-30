@@ -27,16 +27,30 @@ components:
     min_containment: 0.9
     min_coverage: 0.1
   grasp_engine:
-    backend: economic
-    checkpoint: third_party/economic_grasp/checkpoint/economicgrasp_epoch10.tar
+    backend: graspgenx
+    checkpoint_dir: third_party/GraspGenX/ext/graspgenx_checkpoints/release
+    assets_dir: third_party/GraspGenX/assets
+    gripper: piper_hand
+    planner: diffusion
+    num_grasps: 100
+    grasp_threshold: -1.0
+    min_input_points: 100
+    max_input_points: 5000
+    min_depth_m: 0.10
+    max_depth_m: 0.65
     use_collision: true
+    collision_threshold: 0.01
+    max_scene_points: 8192
+    num_collision_samples: 2000
+    collision_batch_size: 16
   visualizer:
-    backend: o3d
-    title: "D405 YOLO + EfficientSAM + EconomicGrasp"
+    backend: graspgenx_o3d
+    title: "D405 YOLO + EfficientSAM + GraspGenX"
+    show_top_mesh: true
+    top_mesh_color: [0.1, 0.5, 1.0]
 
 pipeline:
-  box_scale: 1.25
+  box_scale: 1.15
   predict_topk: 100
-  visualize_topk: 20
+  visualize_topk: 50
   min_depth_points: 100
-  filter_orientation: true

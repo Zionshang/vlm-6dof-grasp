@@ -39,13 +39,14 @@ poses:
 
 target_approach:
   default:
-    offset: [-0.12, 0.0, 0.13]
+    # At rpy=[0, 0.9, 0], TCP +X points toward the detected target centre.
+    # Keep the TCP 0.20 m behind that centre along its local approach axis.
+    offset: [-0.124322, 0.0, 0.156665]
     rpy: [0.0, 0.9, 0.0]
   targets:
     red_bag:
-      offset: [-0.18, 0.0, 0.33]
-    lunch_box:
-      offset: [-0.14, 0.0, 0.20]
+      # Same viewing direction, with a 0.38 m stand-off distance.
+      offset: [-0.18, 0.0, 0.30]
 
 lcm:
   arm:

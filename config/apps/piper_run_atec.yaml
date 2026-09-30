@@ -1,0 +1,79 @@
+# Far locate -> three-view GraspGenX -> reachability select -> full grasp.
+components:
+  dashboard:
+    backend: web
+    host: 127.0.0.1
+    port: 8765
+    open_browser: true
+    max_points: 12000
+  robot:
+    backend: piper_lcm
+  camera:
+    backend: d405_stereo
+    width: 848
+    height: 480
+    fps: 30
+    discard_frames: 5
+  depth:
+    backend: ffs
+    model: third_party/Fast-FoundationStereo/weights/20-26-39/model_best_bp2_serialize.pth
+    scale: 0.5
+    valid_iters: 4
+    max_disp: 192
+  instance_model:
+    backend: yolo_seg
+    weights: models/yolo26seg/best.pt
+    confidence: 0.7
+    iou: 0.7
+    imgsz: 640
+    max_det: 20
+    device: 0
+    classes: [watermelon, can, lunch_box, red_bag]
+  grasp_engine:
+    backend: graspgenx
+    checkpoint_dir: third_party/GraspGenX/ext/graspgenx_checkpoints/release
+    assets_dir: third_party/GraspGenX/assets
+    gripper: piper_hand
+    planner: diffusion
+    num_grasps: 100
+    grasp_threshold: -1.0
+    min_input_points: 100
+    max_input_points: 5000
+    min_depth_m: 0.10
+    max_depth_m: 0.65
+    use_collision: true
+    collision_threshold: 0.01
+    max_scene_points: 8192
+    num_collision_samples: 2000
+    collision_batch_size: 16
+  reachability:
+    backend: pink
+    urdf: grq20_v2d5_piperL_gripper.urdf
+    solver: quadprog
+    joint_limit_margin_deg: 1.0
+    singular_threshold: 0.0001
+    risk_tolerance: 0.05
+    max_joint_risk: 1.0
+    view_joint_limit_margin_deg: 5.0
+  executor:
+    backend: grasp
+    require_home: true
+    steps:
+      # The configured Piper controller TCP uses +X as the approach axis.
+      - {name: approach, gripper: max, speed_percent: 60, local_offset: [-0.075, 0.0, 0.0]}
+      - {name: reach, gripper: max, speed_percent: 60}
+      - {name: grasp, gripper: target, speed_percent: 100, gripper_duration: 0.5, wait: 0.5}
+      - {name: lift, gripper: target, speed_percent: 100, offset: [0.0, 0.0, 0.08]}
+      - {name: home, gripper: target, use_home_pose: true}
+      - {name: release, gripper: max, use_home_pose: true}
+pipeline:
+  confirmation:
+    high_confidence: 0.90
+    high_frames: 5
+    normal_confidence: 0.80
+    normal_frames: 10
+    max_frames: 40
+  locate_max_depth_m: 0.85
+  min_target_depth_points: 100
+  predict_topk: 20   # 目标体积、场景碰撞过滤后，按 score 保留的上限
+  save_debug: true

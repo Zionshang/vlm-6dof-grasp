@@ -11,12 +11,10 @@ _ROLE_MODULES = {
     "depth": "depth",
     "detector": "detectors",
     "segmenter": "segmenters",
-    "obb_estimator": "obb",
-    "obb_fusion": "obb",
-    "view_adjust": "obb",
-    "view_plan_visualizer": "obb",
     "grasp_engine": "grasp_engines",
-    "selector": "selectors",
+    "instance_model": "instance_models",
+    "candidate_selector": "selectors",
+    "reachability": "selectors",
     "executor": "executors",
     "visualizer": "visualizers",
     "dashboard": "dashboards",
@@ -186,7 +184,7 @@ class GraspManager:
         if self._closed:
             return
         self._closed = True
-        print("[Manager] releasing resources...")
+        print("[流程] 释放组件资源")
         self._call_lifecycle("safe_stop", self._build_order)
         self._call_lifecycle("close", reversed(self._build_order))
 

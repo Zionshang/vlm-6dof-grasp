@@ -6,9 +6,11 @@ import sys
 
 class RobotClient(Protocol):
     """机械臂接口:末端位姿控制 + 状态读取 + 复位。"""
-    def set_ee_pose(self, pose, gripper_pos, preview_time) -> None: ...
+    def set_ee_pose(self, pose, gripper_pos, preview_time=0.0,
+                    gripper_duration=0.0) -> None: ...
     def get_state(self) -> Any: ...
     def reset_to_home(self) -> None: ...
+    def set_speed_percent(self, percent: int) -> None: ...
 
 
 class SafeRobotClient:
@@ -68,10 +70,13 @@ class PiperLcmRobotClient:
             raise ValueError("Piper profile requires lcm.arm.url")
         return cls(ArmLcmClient(url=url))
 
-    def set_ee_pose(self, pose, gripper_pos, *args, **kwargs):
+    def set_ee_pose(self, pose, gripper_pos, preview_time=0.0,
+                    gripper_duration=0.0):
         """Send Piper pose and gripper only; Piper has no duration control."""
         self._client.set_cartesian_cmd(
             tcp_pose=list(pose), gripper=float(gripper_pos),
+            preview_time=preview_time,
+            gripper_duration=gripper_duration,
         )
 
     def get_state(self):
@@ -84,6 +89,9 @@ class PiperLcmRobotClient:
 
     def reset_to_home(self):
         self._client.set_to_home()
+
+    def set_speed_percent(self, percent):
+        self._client.set_speed_percent(percent)
 
     def set_to_passive(self):
         self._client.set_to_passive()

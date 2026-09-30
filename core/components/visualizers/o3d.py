@@ -9,15 +9,14 @@ from registry import register
 from visualization_data import grasp_geometries, point_cloud_arrays
 
 
-@register("visualizer", "o3d", requires=("camera",))
-def build_o3d_visualizer(cfg=None, hw=None, ctx=None, dependencies=None):
+def create_o3d_visualizer(cfg, camera, grasp_renderer=grasp_geometries):
+    """Create the shared O3D window with a pluggable grasp renderer."""
     vcfg = cfg or {}
     vis = o3d.visualization.VisualizerWithKeyCallback()
     vis.create_window(window_name=vcfg.get("title", "Grasp"))
     pcd = o3d.geometry.PointCloud()
     state = {"added": False}
     grasp_geoms = []
-    camera = dependencies["camera"]
 
     class O3DVisualizer:
         def update_cloud(self, color, depth_m):
@@ -38,7 +37,7 @@ def build_o3d_visualizer(cfg=None, hw=None, ctx=None, dependencies=None):
             nonlocal grasp_geoms
             for g in grasp_geoms:
                 vis.remove_geometry(g, reset_bounding_box=False)
-            grasp_geoms = grasp_geometries(gg)
+            grasp_geoms = grasp_renderer(gg)
             for geometry in grasp_geoms:
                 vis.add_geometry(geometry, reset_bounding_box=False)
 
@@ -52,3 +51,8 @@ def build_o3d_visualizer(cfg=None, hw=None, ctx=None, dependencies=None):
             vis.destroy_window()
 
     return O3DVisualizer()
+
+
+@register("visualizer", "o3d", requires=("camera",))
+def build_o3d_visualizer(cfg=None, hw=None, ctx=None, dependencies=None):
+    return create_o3d_visualizer(cfg, dependencies["camera"])

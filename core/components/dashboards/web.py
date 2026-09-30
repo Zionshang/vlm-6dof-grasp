@@ -8,7 +8,7 @@ def build_web_dashboard(cfg=None, hw=None, ctx=None, dependencies=None):
     import paths
 
     cfg = cfg or {}
-    output_dir = paths.PROJECT_ROOT / cfg.get("output_dir", "output/piper_run_test")
+    output_dir = paths.PROJECT_ROOT / cfg.get("output_dir", "output/piper_run_atec")
     return WebDashboard(
         output_dir, host=cfg.get("host", "127.0.0.1"),
         port=cfg.get("port", 8765),

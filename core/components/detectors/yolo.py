@@ -1,8 +1,7 @@
 """Ultralytics YOLO detection adapter and component registration."""
 from dataclasses import dataclass, field
 
-import numpy as np
-
+from components.yolo_common import bgr_image, class_ids, model_names
 from registry import register
 
 
@@ -15,8 +14,6 @@ class Detection:
 
 class YOLODetector:
     """Expose an Ultralytics detection checkpoint through ``detect``."""
-
-    _ALL_TARGETS = {"", "*", "all", "any"}
 
     def __init__(self, weights, confidence=0.25, iou=0.7, imgsz=640,
                  device=None, max_det=100, classes=None):
@@ -34,52 +31,15 @@ class YOLODetector:
 
     @property
     def names(self):
-        names = self.model.names
-        if isinstance(names, dict):
-            return {int(key): str(value) for key, value in names.items()}
-        return {index: str(value) for index, value in enumerate(names)}
+        return model_names(self.model)
 
     def _class_ids(self, target):
         selection = self.configured_classes if target is None else target
-        if selection is None:
-            return None
-        if isinstance(selection, (int, str)):
-            selection = [selection]
-        tokens = []
-        for value in selection:
-            tokens.extend(str(value).split(","))
-        tokens = [token.strip() for token in tokens if token.strip()]
-        if not tokens or (len(tokens) == 1
-                          and tokens[0].lower() in self._ALL_TARGETS):
-            return None
-
-        names = self.names
-        by_name = {name.casefold(): index for index, name in names.items()}
-        class_ids = []
-        unknown = []
-        for token in tokens:
-            if token.isdigit() and int(token) in names:
-                class_ids.append(int(token))
-            elif token.casefold() in by_name:
-                class_ids.append(by_name[token.casefold()])
-            else:
-                unknown.append(token)
-        if unknown:
-            available = ", ".join(f"{key}:{value}" for key, value in names.items())
-            raise ValueError(
-                f"YOLO unknown target {unknown}; available classes: {available}"
-            )
-        return sorted(set(class_ids))
+        return class_ids(self.names, selection)
 
     def detect(self, color, target=None):
-        if (color is None or np.asarray(color).ndim != 3
-                or np.asarray(color).shape[2] != 3):
-            raise ValueError("YOLO requires an HxWx3 RGB image")
-        # Ultralytics treats numpy inputs as BGR, while all project cameras
-        # publish RGB. Convert here so model preprocessing sees correct colors.
-        bgr = np.ascontiguousarray(np.asarray(color)[..., ::-1])
         kwargs = {
-            "source": bgr,
+            "source": bgr_image(color),
             "conf": self.confidence,
             "iou": self.iou,
             "imgsz": self.imgsz,

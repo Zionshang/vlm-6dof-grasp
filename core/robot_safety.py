@@ -12,11 +12,17 @@ COMMAND_STATE_TIMEOUT_S = 2.0
 HOLD_POSITION_M = 0.03
 HOLD_ORIENTATION_RAD = np.deg2rad(10)
 ARM_ERRORS = {
-    1: "急停", 2: "无逆解", 3: "奇异点", 4: "目标位置超限",
+    1: "急停", 2: "无逆解", 3: "奇异点", 4: "目标关节角超限",
     5: "关节通信异常", 6: "关节抱闸未释放", 7: "发生碰撞",
     8: "示教超速", 9: "关节状态异常", 10: "控制器异常",
     14: "主控过温", 15: "电阻过温",
 }
+
+
+class RobotStatusError(RuntimeError):
+    def __init__(self, status, message):
+        self.status = int(status)
+        super().__init__(message)
 
 
 def _values(state):
@@ -48,8 +54,10 @@ def _read(robot, label):
     status = state.get("arm_status")
     if status not in (None, 0):
         error = ARM_ERRORS.get(status, "未知机械臂异常")
-        raise RuntimeError(f"{label} 失败: {error} (arm_status={status}), "
-                           f"当前pose={_pose(state)}")
+        raise RobotStatusError(
+            status, f"{label} 失败: {error} (arm_status={status}), "
+            f"当前pose={_pose(state)}",
+        )
     return state
 
 
@@ -82,9 +90,10 @@ def monitor_robot_state(robot, duration, expected_pose, label="Robot"):
 
 
 def _wait_for_arrival(robot, previous_target_utime, timeout, label,
-                      expected_gripper, expected_pose):
+                      expected_gripper, expected_pose, min_command_time=0.0):
     deadline = time.monotonic() + timeout
-    previous, accepted, stable, state = int(previous_target_utime or 0), None, None, None
+    previous, accepted = int(previous_target_utime or 0), None
+    accepted_at, stable, state = None, None, None
     pose_error, grip_ok = (float("inf"), float("inf")), False
 
     while time.monotonic() < deadline:
@@ -92,7 +101,8 @@ def _wait_for_arrival(robot, previous_target_utime, timeout, label,
         target = int(state.get("target_utime", 0))
         if target in (0, previous):
             continue
-        accepted = target if accepted is None else accepted
+        if accepted is None:
+            accepted, accepted_at = target, time.monotonic()
         if target != accepted:
             raise RuntimeError(f"等待{label}时目标被新命令覆盖")
 
@@ -105,7 +115,9 @@ def _wait_for_arrival(robot, previous_target_utime, timeout, label,
                    pose_error[0] <= POSITION_TOLERANCE_M and
                    pose_error[1] < ORIENTATION_TOLERANCE_RAD)
         stable = stable or time.monotonic() if pose_ok and grip_ok else None
-        if stable and time.monotonic() - stable >= STABLE_TIME_S:
+        now = time.monotonic()
+        if (stable and now - stable >= STABLE_TIME_S and
+                now - accepted_at >= min_command_time):
             print(f"[到达] {label}: pose={_pose(state)}")
             return state
 
@@ -130,7 +142,8 @@ def _wait_for_arrival(robot, previous_target_utime, timeout, label,
 
 
 def _command_and_wait(robot, command, timeout, label, gripper=None,
-                      expected_pose=None, send_without_state=False):
+                      expected_pose=None, send_without_state=False,
+                      min_command_time=0.0):
     state = robot.get_state()
     deadline = time.monotonic() + COMMAND_STATE_TIMEOUT_S
     while not send_without_state and not state and time.monotonic() < deadline:
@@ -149,17 +162,21 @@ def _command_and_wait(robot, command, timeout, label, gripper=None,
     command()
     return _wait_for_arrival(
         robot, previous, timeout, label, expected_gripper, expected_pose,
+        min_command_time,
     )
 
 
 def move_to_pose_and_wait(robot, hw, pose, gripper, timeout, label="Robot",
-                          verify_gripper=True):
+                          verify_gripper=True, gripper_duration=0.0):
     if not hw.in_workspace(*pose[:3]):
         raise RuntimeError(f"{label} 目标超出工作空间: pose={_pose({'ee_pose': pose})}")
     print(f"[发送] {label}: pose={_pose({'ee_pose': pose})}, grip={gripper:.3f}")
     return _command_and_wait(
-        robot, lambda: robot.set_ee_pose(pose, gripper), timeout, label,
+        robot, lambda: robot.set_ee_pose(
+            pose, gripper, gripper_duration=gripper_duration,
+        ), timeout, label,
         gripper if verify_gripper else None, pose,
+        min_command_time=gripper_duration,
     )
 
 

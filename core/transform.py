@@ -1,4 +1,4 @@
-"""Shared rigid transforms for camera, TCP, targets, OBBs, and grasps."""
+"""Shared rigid transforms for camera, TCP, targets, and grasps."""
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -19,6 +19,35 @@ def pose_transform(pose):
     )
 
 
+def offset_pose(pose, offset=(0.0, 0.0, 0.0),
+                local_offset=(0.0, 0.0, 0.0), rpy=None):
+    """Apply world/local translations using the final commanded orientation."""
+    result = np.asarray(pose, dtype=float).copy()
+    if rpy is not None:
+        result[3:] = rpy
+    result[:3] += np.asarray(offset, dtype=float)
+    result[:3] += Rotation.from_euler("xyz", result[3:]).apply(local_offset)
+    return result
+
+
+def target_orbit_poses(target, offset, rpy, angles_deg=(-30.0, 0.0, 30.0)):
+    """Rotate one target-facing observation pose around base Z."""
+    target, offset = np.asarray(target, float), np.asarray(offset, float)
+    base_rotation = Rotation.from_euler("xyz", rpy)
+    poses = []
+    for angle in angles_deg:
+        yaw = Rotation.from_euler("z", np.deg2rad(angle))
+        rotation = yaw * base_rotation
+        poses.append(np.r_[target + yaw.apply(offset),
+                           rotation.as_euler("xyz")])
+    return poses
+
+
+PIPER_FLANGE_T_TCP = pose_transform(
+    [0.0, 0.0, 0.13, 0.0, -np.pi / 2, 0.0]
+)
+
+
 def camera_to_base_transform(ee_pose, handeye_rot, handeye_trans):
     """Return camera→base from TCP→base and calibrated camera→TCP."""
     return pose_transform(ee_pose) @ rigid_transform(
@@ -26,46 +55,9 @@ def camera_to_base_transform(ee_pose, handeye_rot, handeye_trans):
     )
 
 
-def camera_frame_to_base(position, rotation, ee_pose,
-                         handeye_rot, handeye_trans):
-    """Transform a camera-frame position and orientation into the base frame."""
-    camera_to_base = camera_to_base_transform(
-        ee_pose, handeye_rot, handeye_trans,
-    )
-    return (
-        camera_to_base[:3, :3] @ np.asarray(position)+camera_to_base[:3, 3],
-        camera_to_base[:3, :3] @ np.asarray(rotation),
-    )
-
-
-def camera_pose_to_ee(camera_position, camera_rotation,
-                      handeye_rot, handeye_trans):
-    """Recover base-frame TCP position/rotation for a desired camera pose."""
-    camera_rotation = np.asarray(camera_rotation, dtype=float)
-    ee_rotation = camera_rotation @ np.asarray(handeye_rot, dtype=float).T
-    ee_position = (np.asarray(camera_position, dtype=float)
-                   - ee_rotation @ np.asarray(handeye_trans, dtype=float))
-    return ee_position, ee_rotation
-
-
-def box_center_to_base(depth, box, intrinsic, ee_pose, handeye_rot,
-                       handeye_trans, factor_depth=1.0, patch_size=5):
-    """Project robust detection-box centre depth into the robot base frame."""
-    x1, y1, x2, y2 = box
-    u, v = int((x1+x2)/2), int((y1+y2)/2)
-    height, width = depth.shape
-    u, v = np.clip(u, 0, width-1), np.clip(v, 0, height-1)
-    half = patch_size//2
-    patch = depth[max(0, v-half):min(height, v+half+1),
-                  max(0, u-half):min(width, u+half+1)]
-    valid = patch[patch > 0]
-    if not valid.size:
-        return None
-
-    z = float(np.median(valid))/factor_depth
-    fx, fy = intrinsic[0, 0], intrinsic[1, 1]
-    cx, cy = intrinsic[0, 2], intrinsic[1, 2]
-    point = np.array([(u-cx)*z/fx, (v-cy)*z/fy, z, 1.])
+def camera_point_to_base(point, ee_pose, handeye_rot, handeye_trans):
+    """Transform one XYZ point from the camera frame to the robot base."""
+    point = np.r_[np.asarray(point, dtype=float), 1.0]
     return (camera_to_base_transform(
         ee_pose, handeye_rot, handeye_trans,
     ) @ point)[:3]
@@ -81,16 +73,42 @@ def convert_new(grasp_translation, grasp_rotation_mat, current_ee_pose,
     grasp_to_camera = rigid_transform(
         grasp_rotation_mat, grasp_translation,
     )
-    alignment = rigid_transform(
+    tcp_to_grasp = rigid_transform(
         np.diag([1., -1., -1.]), [grasp_depth, 0., 0.],
     )
-    gripper_to_base = (
+    tcp_to_base_goal = (
         camera_to_base_transform(
             current_ee_pose, handeye_rot, handeye_trans,
         )
-        @ grasp_to_camera @ alignment
+        @ grasp_to_camera @ tcp_to_grasp
     )
     return np.r_[
-        gripper_to_base[:3, 3],
-        Rotation.from_matrix(gripper_to_base[:3, :3]).as_euler("xyz"),
+        tcp_to_base_goal[:3, 3],
+        Rotation.from_matrix(tcp_to_base_goal[:3, :3]).as_euler("xyz"),
+    ].tolist()
+
+
+def graspgenx_grasp_to_base(grasp_translation, grasp_rotation_mat,
+                            capture_ee_pose, handeye_rot, handeye_trans):
+    """Convert a GraspGenX grasp to the Piper controller TCP pose.
+
+    GraspGenX uses +Z for approach and +X for closing.  Piper's URDF gripper
+    uses +Z/+Y, while its configured controller TCP uses +X/+Y.
+    """
+    camera_T_graspgenx = rigid_transform(
+        grasp_rotation_mat, grasp_translation,
+    )
+    graspgenx_T_tcp = rigid_transform(
+        Rotation.from_euler("z", np.pi / 2).as_matrix(), [0.0] * 3,
+    ) @ PIPER_FLANGE_T_TCP
+    base_T_tcp = (
+        camera_to_base_transform(
+            capture_ee_pose, handeye_rot, handeye_trans,
+        )
+        @ camera_T_graspgenx
+        @ graspgenx_T_tcp
+    )
+    return np.r_[
+        base_T_tcp[:3, 3],
+        Rotation.from_matrix(base_T_tcp[:3, :3]).as_euler("xyz"),
     ].tolist()

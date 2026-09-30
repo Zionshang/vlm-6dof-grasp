@@ -1,7 +1,7 @@
 # VLM-6DoF-Grasp
 
-Config-driven 6DoF grasping with RealSense, FFS, VLM and pluggable segmentation,
-EconomicGrasp and pluggable robot backends.
+Config-driven 6DoF grasping with RealSense, FFS, unified instance perception,
+pluggable grasp generators, and pluggable robot backends.
 
 ## Architecture
 
@@ -10,8 +10,8 @@ EconomicGrasp and pluggable robot backends.
 - `config/apps/`: component composition and application-level pipeline options.
 - `core/components/`: backend plugins registered by `(role, backend)`.
 - `core/manager.py`: dependency resolution, preflight and lifecycle ownership.
-- `core/grasp_perception.py`: shared RGB-D capture, retry and
-  detect → segment → generate → select orchestration.
+- `core/grasp_perception.py`: shared instance observation, depth acquisition,
+  grasp generation, and expected-empty-result retry orchestration.
 - `third_party/`: vendored algorithm projects (`Fast-FoundationStereo`,
   `fastsam`, `EfficientSAM`, `economic_grasp` and `vlm`); adapters stay under
   `core/components/`.
@@ -37,25 +37,24 @@ resident instance before loading CUDA-heavy components.
 
 ## Formal entrypoints
 
-Piper+D405 feedback-verified grasp test:
+Piper+D405 three-view grasping:
 
 ```bash
-python apps/piper_run_test.py --target all --mode grasp
+python apps/piper_run_atec.py --target can
 ```
 
-The test verifies ARM_STATE, returns home, starts D405+FFS, moves to the
-configured observation pose, runs YOLO+EfficientSAM+EconomicGrasp, selects the first
-geometrically valid grasp, and executes approach → reach → grasp → lift → home.
-Every Cartesian step is feedback-verified; any failure after robot-state
-verification returns home. Use `--mode reach` to retain `run_test()` for
-approach/reach calibration without closing the gripper.
+The application verifies ARM_STATE, returns home, starts D405+FFS+YOLO26-seg,
+confirms a target from model confidence, locates it from robust mask depth,
+collects front/left/right GraspGenX candidates, applies IK reachability
+selection, asks for terminal confirmation, then executes
+approach → reach → grasp → lift → home → release.
+Every Cartesian step is feedback-verified; failures return the robot home.
 
 The same command opens `http://127.0.0.1:8765` automatically. Its local web
 dashboard mirrors the terminal log in real time, separates component details,
 shows images produced by the current run, and renders an interactive point
-cloud with the same GraspNetAPI
-gripper geometry used by the desktop Open3D viewer. Dashboard settings live in
-`config/apps/piper_run_test.yaml` and do not participate in robot control.
+cloud. Dashboard and pipeline settings live in
+`config/apps/piper_run_atec.yaml`.
 
 Task-LCM grasp service (requires a hardware profile with task LCM, drop pose
 and grasp policy configured, and an app YAML selecting the matching robot
@@ -68,9 +67,7 @@ python apps/run_grasp_lcm.py \
 ```
 
 The current `grasp_lcm.yaml` selects `piper_lcm`; Piper task-LCM channels,
-drop pose and the formal service policy are intentionally still unset. The
-standalone `piper_run_test.py` sequence is configured separately in its app
-YAML.
+drop pose and the formal service policy are intentionally still unset.
 
 D435i live grasp visualization:
 
@@ -92,17 +89,6 @@ restrict detection. The 2D window continuously shows YOLO boxes. Focus that
 window and press `1` to run FFS, EfficientSAM and EconomicGrasp once; the mask
 overlay and Open3D scene update when inference finishes. Press `Q`/`Esc`, or
 close the Open3D window, to exit.
-
-Real-time D405 object-OBB integration check:
-
-```bash
-conda run --no-capture-output -n economicgrasp \
-  python tests/d405_obb_realtime.py --target all
-```
-
-The script uses the same D405 stereo + FFS + YOLO + EfficientSAM perception
-configuration as the Piper test, fits a tight PCA-based oriented bounding box
-to the masked object point cloud, and draws that box in Open3D.
 
 Keyboard-triggered X5 realtime grasping:
 

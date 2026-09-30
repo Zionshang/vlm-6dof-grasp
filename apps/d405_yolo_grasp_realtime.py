@@ -1,4 +1,4 @@
-"""D405 live YOLO preview; press 1 for one FFS/SAM/grasp update."""
+"""D405 live YOLO preview; press 1 for one FFS/SAM/GraspGenX update."""
 import argparse
 import sys
 import time
@@ -12,7 +12,7 @@ import paths
 
 import components.detectors.yolo  # noqa: F401 - register YOLO for this app
 from context import FrameContext
-from grasp_geometry import expand_boxes, filter_grasps_by_orientation
+from grasp_geometry import expand_boxes
 from manager import GraspManager
 from worker import AsyncWorker
 
@@ -65,7 +65,6 @@ class KeyGraspHandler:
         self.predict_topk = int(cfg.get("predict_topk", 100))
         self.visualize_topk = int(cfg.get("visualize_topk", 20))
         self.min_depth_points = int(cfg.get("min_depth_points", 100))
-        self.filter_orientation = bool(cfg.get("filter_orientation", True))
 
         self.worker = AsyncWorker(self._run_job, name="yolo-grasp-worker")
         self.job_active = False
@@ -89,10 +88,11 @@ class KeyGraspHandler:
             if local.depth is None:
                 raise RuntimeError("无有效 FFS 深度")
             boxes = expand_boxes(detection.boxes, color.shape, self.box_scale)
-            mask = self.segmenter.segment(color, boxes)
-            if mask is None:
+            instance_masks = self.segmenter.segment_instances(color, boxes)
+            if not instance_masks:
                 raise RuntimeError("EfficientSAM 无结果")
-            mask = np.asarray(mask, dtype=bool)
+            masks = np.asarray(instance_masks, dtype=bool)
+            mask = np.any(masks, axis=0)
             if mask.shape != local.depth.shape:
                 raise RuntimeError(
                     f"RGB/FFS/mask 未对齐: {color.shape[:2]}/"
@@ -102,16 +102,17 @@ class KeyGraspHandler:
             if np.count_nonzero(valid) < self.min_depth_points:
                 raise RuntimeError("目标区域有效深度点不足")
 
-            grasps, _ = self.grasp_engine.predict(
-                color, local.depth, mask=mask, topk=self.predict_topk,
+            grasps, grasp_info = self.grasp_engine.predict(
+                color, local.depth, mask=masks, topk=self.predict_topk,
             )
             if grasps is None or len(grasps) == 0:
                 raise RuntimeError("无抓取候选")
-            grasps = (filter_grasps_by_orientation(grasps, self.visualize_topk)
-                      if self.filter_orientation
-                      else grasps[:self.visualize_topk])
+            grasps = grasps[:self.visualize_topk]
             labels = ",".join(detection.labels)
-            status = f"{labels}: boxes={len(boxes)}, grasps={len(grasps)}"
+            off_target = grasp_info.get("target_rejected", 0)
+            rejected = grasp_info.get("collision_rejected", 0)
+            status = (f"{labels}: boxes={len(boxes)}, grasps={len(grasps)}, "
+                      f"off_target={off_target}, collision={rejected}")
             return (kind, color, detection, mask, local.depth, grasps,
                     status, time.monotonic() - started)
         except Exception as exc:
@@ -154,7 +155,7 @@ class KeyGraspHandler:
             kind = "grasp" if self.grasp_pending else "detect"
             if kind == "grasp":
                 self.grasp_pending = False
-                print("[流程] FFS → YOLO → EfficientSAM → EconomicGrasp")
+                print("[流程] FFS → YOLO → EfficientSAM → GraspGenX")
             frame = (kind, ctx.color.copy(), tuple(x.copy() for x in ctx.ir))
             self.worker.submit(frame)
             self.job_active = True
