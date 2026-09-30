@@ -1,0 +1,40 @@
+# Runtime dependencies for config/apps/piper_run_atec.yaml (Python 3.10).
+# Install the JetPack-matched CUDA PyTorch/torchvision pair and Pinocchio/Pink
+# stack first; see docs/jetson_deployment.md. The vendored GraspGenX and the
+# sibling agx_control driver are installed separately from their source trees.
+# This is intentionally not a pip freeze of the x86_64 graspgenx environment.
+
+# Numeric/image stack: keep NumPy 1.x for the current GraspGenX environment.
+numpy==1.26.4
+scipy==1.15.2
+opencv-python==4.11.0.86
+scikit-image==0.24.0
+Pillow>=11,<13
+imageio==2.37.4
+PyYAML>=6,<7
+
+# RealSense D405 and LCM robot transport.
+pyrealsense2==2.58.4.10922
+lcm==1.5.2
+
+# FFS, YOLO and GraspGenX inference (torch is platform-specific).
+timm==1.0.15
+einops>=0.8,<0.9
+omegaconf==2.3.1
+ultralytics==8.4.95
+addict==2.4.0
+diffusers==0.11.1
+huggingface-hub==0.25.2
+transformers==4.48.3
+trimesh==4.5.3
+h5py>=3.10,<4
+scikit-learn>=1.6,<1.8
+webdataset>=1,<2
+yourdfpy==0.0.56
+
+# Local dashboard and geometric visualization. Open3D 0.19 has no official
+# Linux aarch64 wheel; 0.20 provides one for Python 3.10 / glibc >= 2.35.
+Flask>=3.1,<4
+plotly>=6,<8
+open3d==0.19.0; platform_machine == "x86_64"
+open3d==0.20.0; platform_machine == "aarch64"
